@@ -1,3 +1,4 @@
+alert("app.js lastet");
 import {
 VERSION,
 BUILD_DATE,
