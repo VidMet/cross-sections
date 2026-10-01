@@ -1,7 +1,7 @@
 {
-  "title": "Interaktiv tverrprofilviser",
-  "icon": "Interactive cross section viewer for Trimble Connect",
+  "title": "Tverrprofilviser",
+  "icon": "https://vidmet.github.io/cross-sections/assets/icon.png",
   "url": "https://vidmet.github.io/cross-sections/index.html",
-  "description":"Interactive cross section viewer for Trimble Connect",
+  "description":"Interaktiv tverrprofilviser",
   "enabled": true
 }
