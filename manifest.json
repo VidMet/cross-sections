@@ -1,6 +1,6 @@
 {
   "title": "Fasesimulering i Trimble Connect",
-  "icon": "https://vidmet.github.io/cross-sections/process.png",
+  "icon": "Interactive cross section viewer for Trimble Connect",
   "url": "https://vidmet.github.io/cross-sections/index.html",
   "description":"Interactive cross section viewer for Trimble Connect",
   "enabled": true
