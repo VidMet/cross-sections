@@ -2,11 +2,12 @@ export const markerState = {
 station: 0,
 dragging: false,
 objectId: null,
-profileId: null
+profileId: null,
 worldX: 0,
 worldY: 0,
 worldZ: 0
 };
+
 export function createMarker() {
 console.log(
 "Marker opprettet"
@@ -25,7 +26,7 @@ station
 }
 
 export function removeMarker() {
- 
+
 console.log(
 "Marker fjernet"
 );
