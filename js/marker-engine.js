@@ -1,0 +1,1 @@
+let markerState={station:0,dragging:false,objectId:null};export function createMarker(){console.log('marker opprettet');}export function moveMarker(station){markerState.station=station;console.log('marker flyttet',station);}

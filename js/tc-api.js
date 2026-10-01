@@ -1,0 +1,1 @@
+export async function connectTC(){try{if(window.TrimbleConnectWorkspace){await TrimbleConnectWorkspace.connect(window.parent,()=>{});setStatus('Tilkoblet Trimble Connect');}else{setStatus('Demo-modus');}}catch(e){setStatus('Demo-modus');console.error(e);}}export function setStatus(t){document.getElementById('status').textContent=t;}

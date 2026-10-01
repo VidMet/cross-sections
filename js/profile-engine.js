@@ -1,0 +1,1 @@
+export let currentProfile={id:null,name:'',length:0};export function setProfile(p){currentProfile=p;}

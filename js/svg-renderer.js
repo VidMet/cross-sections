@@ -1,0 +1,1 @@
+export function drawDemoProfile(){document.getElementById('profileSvg').innerHTML=`<line x1="50" y1="350" x2="900" y2="350" stroke="#ddd"/><polyline points="100,340 250,300 400,290 550,300 700,330 850,360" fill="none" stroke="black" stroke-width="2"/>`; }
