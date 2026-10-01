@@ -1,9 +1,7 @@
 {
-  "name":"Cross Section Viewer",
-  "version":"0.1.0",
+  "title": "Fasesimulering i Trimble Connect",
+  "icon": "https://vidmet.github.io/cross-sections/process.png",
+  "url": "https://vidmet.github.io/cross-sections/index.html",
   "description":"Interactive cross section viewer for Trimble Connect",
-  "url":"https://vidmet.github.io/cross-sections/index.html",
-  "enabled":true,
-  "extensionType":["view"],
-  "permissions":["accesstoken","currentproject"]
+  "enabled": true
 }
