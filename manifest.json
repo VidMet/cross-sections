@@ -1,0 +1,9 @@
+{
+  "name":"Cross Section Viewer",
+  "version":"0.1.0",
+  "description":"Interactive cross section viewer for Trimble Connect",
+  "url":"https://vidmet.github.io/cross_sections/index.html",
+  "enabled":true,
+  "extensionType":["view"],
+  "permissions":["accesstoken","currentproject"]
+}
