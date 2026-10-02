@@ -13,59 +13,125 @@ import {
 from "./tc-api.js";
 
 
-// ====================================================
-// INITIALISERING
-// ====================================================
+// =======================================================
+// GLOBAL FEILHÅNDTERING
+// =======================================================
 
-async function initialize() {
+window.addEventListener(
+    "error",
+    function (event) {
 
-    document
-        .getElementById(
-            "versionInfo"
-        )
-        .innerText =
-        `v${VERSION}`;
+        console.error(
+            "GLOBAL ERROR:",
+            event.error
+        );
 
-    document
-        .getElementById(
-            "buildInfo"
-        )
-        .innerText =
-        BUILD_DATE;
+        setStatus(
+            "JS FEIL - se Console"
+        );
+    }
+);
 
-    const api =
-        await connectTC();
+window.addEventListener(
+    "unhandledrejection",
+    function (event) {
 
-    console.log(
-        "API:",
-        api
-    );
+        console.error(
+            "PROMISE ERROR:",
+            event.reason
+        );
 
-    setStatus(
-        "Klar"
-    );
+        setStatus(
+            "PROMISE FEIL - se Console"
+        );
+    }
+);
+
+
+// =======================================================
+// VERSJONSVISNING
+// =======================================================
+
+function initVersionInfo() {
+
+    try {
+
+        const versionElement =
+            document.getElementById(
+                "versionInfo"
+            );
+
+        const buildElement =
+            document.getElementById(
+                "buildInfo"
+            );
+
+        if (versionElement) {
+
+            versionElement.innerText =
+                `v${VERSION}`;
+        }
+
+        if (buildElement) {
+
+            buildElement.innerText =
+                BUILD_DATE;
+        }
+
+        console.log(
+            "APP:",
+            APP_NAME
+        );
+
+        console.log(
+            "VERSION:",
+            VERSION
+        );
+
+        console.log(
+            "BUILD:",
+            BUILD_DATE
+        );
+    }
+    catch (err) {
+
+        console.error(
+            "VERSJONSFEIL:",
+            err
+        );
+    }
 }
 
 
-// ====================================================
-// TEST AV VALGT OBJEKT
-// ====================================================
+// =======================================================
+// INITIALISERING
+// =======================================================
 
-async function selectProfile() {
+async function initialize() {
+
+    console.log(
+        "========== START =========="
+    );
+
+    initVersionInfo();
 
     try {
 
         const api =
-            getAPI();
+            await connectTC();
 
         console.log(
-            "API ved valg:",
+            "Trimble API:",
             api
         );
 
         if (!api) {
 
-            alert(
+            console.warn(
+                "Ingen API mottatt."
+            );
+
+            setStatus(
                 "Ingen API-forbindelse"
             );
 
@@ -73,17 +139,80 @@ async function selectProfile() {
         }
 
         console.log(
-            "Alle API-funksjoner:",
+            "API KEYS:"
+        );
+
+        console.log(
             Object.keys(api)
         );
 
-        alert(
-            "Se Console-vinduet"
+        setStatus(
+            "Trimble API koblet"
         );
     }
     catch (err) {
 
         console.error(
+            "INITIALISERINGSFEIL:",
+            err
+        );
+
+        setStatus(
+            "Initialiseringsfeil"
+        );
+    }
+
+    console.log(
+        "========== FERDIG =========="
+    );
+}
+
+
+// =======================================================
+// PROFILVALG
+// =======================================================
+
+async function selectProfile() {
+
+    console.log(
+        "Velg profileringslinje trykket"
+    );
+
+    try {
+
+        const api =
+            getAPI();
+
+        console.log(
+            "API:",
+            api
+        );
+
+        if (!api) {
+
+            alert(
+                "Ingen API tilgjengelig. Se Console."
+            );
+
+            return;
+        }
+
+        console.log(
+            "API KEYS:"
+        );
+
+        console.log(
+            Object.keys(api)
+        );
+
+        alert(
+            "API dumpet til Console"
+        );
+    }
+    catch (err) {
+
+        console.error(
+            "VELG PROFIL FEIL:",
             err
         );
 
@@ -94,22 +223,101 @@ async function selectProfile() {
 }
 
 
-// ====================================================
-// KNAPPER
-// ====================================================
+// =======================================================
+// GENERER PROFIL
+// =======================================================
 
-document
-    .getElementById(
-        "btnSelectProfile"
-    )
-    .addEventListener(
-        "click",
-        selectProfile
+function generateProfile() {
+
+    console.log(
+        "Generer profil"
     );
 
+    alert(
+        "Ikke implementert ennå"
+    );
+}
 
-// ====================================================
+
+// =======================================================
+// EKSPORT
+// =======================================================
+
+function exportSvg() {
+
+    console.log(
+        "Eksporter SVG"
+    );
+
+    alert(
+        "SVG eksport kommer senere"
+    );
+}
+
+function exportPng() {
+
+    console.log(
+        "Eksporter PNG"
+    );
+
+    alert(
+        "PNG eksport kommer senere"
+    );
+}
+
+
+// =======================================================
+// EVENTS
+// =======================================================
+
+function bindEvents() {
+
+    document
+        .getElementById(
+            "btnSelectProfile"
+        )
+        ?.addEventListener(
+            "click",
+            selectProfile
+        );
+
+    document
+        .getElementById(
+            "btnGenerate"
+        )
+        ?.addEventListener(
+            "click",
+            generateProfile
+        );
+
+    document
+        .getElementById(
+            "btnExportSvg"
+        )
+        ?.addEventListener(
+            "click",
+            exportSvg
+        );
+
+    document
+        .getElementById(
+            "btnExportPng"
+        )
+        ?.addEventListener(
+            "click",
+            exportPng
+        );
+
+    console.log(
+        "Events registrert"
+    );
+}
+
+
+// =======================================================
 // START
-// ====================================================
+// =======================================================
+
+bindEvents();
 
 initialize();
