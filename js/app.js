@@ -219,6 +219,21 @@ async function selectProfile() {
         const first =
             properties[0];
 
+        document.getElementById(
+            "profileName"
+        ).value =
+            first.product.name;
+
+        document.getElementById(
+            "profileId"
+        ).innerText =
+            first.id;
+
+        document.getElementById(
+            "profileLength"
+        ).innerText =
+            first.product.objectType;
+
         console.log(
             "===== FØRSTE OBJEKT ====="
         );
