@@ -19,7 +19,10 @@ const appState = {
     alignmentPoints: [],
     alignmentLength: 0,
     station: 0,
-    currentFrame: null
+    currentFrame: null,
+    markerId: 930170,
+    markerIcon: null,
+    markerUpdateSequence: 0
 };
 
 const versionInfo = document.getElementById("versionInfo");
@@ -38,6 +41,12 @@ const btnMinus10 = document.getElementById("minus10");
 const btnMinus1 = document.getElementById("minus1");
 const btnPlus1 = document.getElementById("plus1");
 const btnPlus10 = document.getElementById("plus10");
+
+const MARKER_ICON_URL = new URL(
+    "../assets/station-marker.svg",
+    import.meta.url
+).href;
+
 
 window.addEventListener("error", function (event) {
     console.error("GLOBAL JAVASCRIPT-FEIL:", event.error || event.message);
@@ -399,6 +408,87 @@ function evaluateStation(station) {
     };
 }
 
+async function removeStationMarker() {
+    const api = getAPI();
+
+    if (
+        !api ||
+        !api.viewer ||
+        typeof api.viewer.removeIcon !== "function" ||
+        !appState.markerIcon
+    ) {
+        return;
+    }
+
+    try {
+        await api.viewer.removeIcon(appState.markerIcon);
+    }
+    catch (error) {
+        console.warn("Kunne ikke fjerne gammel stasjonsmarkor:", error);
+    }
+    finally {
+        appState.markerIcon = null;
+    }
+}
+
+async function updateStationMarker(frame) {
+    const api = getAPI();
+
+    if (
+        !frame ||
+        !api ||
+        !api.viewer ||
+        typeof api.viewer.addIcon !== "function"
+    ) {
+        return;
+    }
+
+    const updateSequence = appState.markerUpdateSequence + 1;
+    appState.markerUpdateSequence = updateSequence;
+
+    const marker = {
+        id: appState.markerId,
+        position: {
+            x: frame.position.x,
+            y: frame.position.y,
+            z: frame.position.z + 1.5
+        },
+        iconPath: MARKER_ICON_URL,
+        size: 48
+    };
+
+    try {
+        if (
+            typeof api.viewer.removeIcon === "function" &&
+            appState.markerIcon
+        ) {
+            await api.viewer.removeIcon(appState.markerIcon);
+        }
+
+        if (updateSequence !== appState.markerUpdateSequence) {
+            return;
+        }
+
+        await api.viewer.addIcon(marker);
+
+        if (updateSequence === appState.markerUpdateSequence) {
+            appState.markerIcon = marker;
+        }
+    }
+    catch (error) {
+        console.error("FEIL VED OPPDATERING AV STASJONSMARKOR:", error);
+        setStatus("Markorfeil - se Console");
+    }
+}
+
+function scheduleStationMarkerUpdate(frame) {
+    if (!frame) {
+        return;
+    }
+
+    updateStationMarker(frame);
+}
+
 function logCurrentFrame(frame) {
     if (!frame) {
         return;
@@ -458,6 +548,8 @@ function updateStation(value, shouldLog) {
     }
 
     appState.currentFrame = evaluateStation(station);
+
+    scheduleStationMarkerUpdate(appState.currentFrame);
 
     if (shouldLog !== false) {
         logCurrentFrame(appState.currentFrame);
@@ -642,6 +734,8 @@ async function selectProfile() {
         }
 
         setStatus("Leser valgt objekt...");
+
+        await removeStationMarker();
 
         const selection = await api.viewer.getSelection();
         logResult("SELECTION", selection);
@@ -843,6 +937,10 @@ function bindEvents() {
 
     console.log("Events registrert");
 }
+
+window.addEventListener("beforeunload", function () {
+    removeStationMarker();
+});
 
 initializeVersionInfo();
 bindEvents();
