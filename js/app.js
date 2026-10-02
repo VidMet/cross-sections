@@ -221,12 +221,41 @@ async function selectProfile() {
             );
 
         console.log(
-            "===== PROPERTIES ====="
+            "===== PROPERTIES JSON ====="
+        );
+
+        console.log(
+            JSON.stringify(
+                properties,
+                null,
+                2
+            )
+        );
+
+        console.log(
+            "===== FØRSTE OBJEKT ====="
         );
 
         console.dir(
-            properties
+            properties[0]
         );
+
+        // Midlertidig visning i UI
+
+        document.getElementById(
+            "profileName"
+        ).value =
+            `RuntimeId ${runtimeIds[0]}`;
+
+        document.getElementById(
+            "profileId"
+        ).innerText =
+            runtimeIds[0];
+
+        document.getElementById(
+            "profileLength"
+        ).innerText =
+            modelId;
 
         alert(
             "Properties skrevet til Console"
