@@ -174,30 +174,46 @@ async function initialize() {
 
 async function selectProfile() {
 
-    const api =
-        getAPI();
+    try {
 
-    console.log(
-        "===== API KEYS ====="
-    );
+        const api = getAPI();
 
-    Object.keys(api)
-        .forEach(
-            key =>
-                console.log(
-                    key
-                )
+        console.log(
+            "===== VIEWER ====="
         );
 
-    console.log(
-        "===== END ====="
-    );
+        console.dir(
+            api.viewer
+        );
 
-    setStatus(
-        "Velg et objekt i modellen og se Console"
-    );
+        console.log(
+            "===== VIEWER KEYS ====="
+        );
+
+        const keys =
+            Object.keys(api.viewer);
+
+        keys.forEach(
+            key =>
+                console.log(key)
+        );
+
+        console.table(keys);
+
+        alert(
+            "Viewer dumpet til Console"
+        );
+
+    }
+    catch(err) {
+
+        console.error(err);
+
+        alert(
+            err.message
+        );
+    }
 }
-
 
 // =======================================================
 // GENERER PROFIL

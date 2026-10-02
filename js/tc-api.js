@@ -29,23 +29,7 @@ export async function connectTC() {
 					    "TC EVENT"
 					);
 
-					console.log(
-					    "TYPE:",
-					    event.type
-					);
-
 					console.dir(event);
-
-					if (event.data) {
-
-					    console.log(
-					        "EVENT.DATA:"
-					    );
-
-					    console.dir(
-					        event.data
-					    );
-					}
 
 					console.groupEnd();
 
