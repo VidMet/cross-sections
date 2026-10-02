@@ -432,3 +432,97 @@ export function renderProfileShell(svgElement, profileData) {
         verticalStep: verticalStep
     };
 }
+
+
+export function renderGeometryDiagnostic(svgElement, diagnostic) {
+    if (!svgElement || !diagnostic) {
+        return;
+    }
+
+    const existingLayer = svgElement.querySelector("#diagnosticLayer");
+
+    if (existingLayer) {
+        existingLayer.remove();
+    }
+
+    const layer = createSvgElement(
+        "g",
+        { id: "diagnosticLayer" }
+    );
+
+    svgElement.appendChild(layer);
+
+    const panelX = 825;
+    const panelY = 112;
+    const panelWidth = 315;
+    const panelHeight = 150;
+
+    layer.appendChild(
+        createSvgElement(
+            "rect",
+            {
+                x: panelX,
+                y: panelY,
+                width: panelWidth,
+                height: panelHeight,
+                rx: 8,
+                fill: "#ffffff",
+                "fill-opacity": 0.94,
+                stroke: "#94a3b8",
+                "stroke-width": 1
+            }
+        )
+    );
+
+    appendText(
+        layer,
+        panelX + 16,
+        panelY + 27,
+        "Geometridiagnose",
+        {
+            fontSize: 15,
+            fontWeight: 600,
+            fill: "#0f172a"
+        }
+    );
+
+    const rows = [
+        "Objekter funnet: " + diagnostic.totalObjects,
+        "Objekter undersøkt: " + diagnostic.inspectedObjects,
+        "Objekter med posisjon: " + diagnostic.positionedObjects,
+        "Kandidater nær snittplanet: " + diagnostic.candidateCount,
+        "Langsgående toleranse: ±" +
+            Number(diagnostic.longitudinalTolerance).toFixed(2) +
+            " m"
+    ];
+
+    rows.forEach(function (row, index) {
+        appendText(
+            layer,
+            panelX + 16,
+            panelY + 53 + index * 19,
+            row,
+            {
+                fontSize: 12,
+                fill: "#334155"
+            }
+        );
+    });
+
+    if (
+        Array.isArray(diagnostic.warnings) &&
+        diagnostic.warnings.length > 0
+    ) {
+        appendText(
+            layer,
+            panelX + 16,
+            panelY + panelHeight - 12,
+            "Advarsel: se Console",
+            {
+                fontSize: 11,
+                fontWeight: 600,
+                fill: "#b45309"
+            }
+        );
+    }
+}

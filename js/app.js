@@ -12,7 +12,8 @@ import {
 
 import {
     clearProfileSvg,
-    renderProfileShell
+    renderProfileShell,
+    renderGeometryDiagnostic
 } from "./svg-renderer.js";
 
 // =======================================================
@@ -34,7 +35,9 @@ const state = {
     markerSequence: 0,
 
     sectionPlaneIds: [],
-    sectionPlane: null
+    sectionPlane: null,
+
+    geometryDiagnostic: null
 };
 
 // =======================================================
@@ -532,6 +535,333 @@ function moveStation(offset) {
 }
 
 // =======================================================
+// GEOMETRIDIAGNOSE
+// =======================================================
+
+function chunkArray(values, chunkSize) {
+    const chunks = [];
+
+    for (let index = 0; index < values.length; index += chunkSize) {
+        chunks.push(values.slice(index, index + chunkSize));
+    }
+
+    return chunks;
+}
+
+function projectWorldPointToSection(point, frame) {
+    const delta = {
+        x: Number(point.x) - frame.position.x,
+        y: Number(point.y) - frame.position.y,
+        z: Number(point.z) - frame.position.z
+    };
+
+    return {
+        offset:
+            delta.x * frame.horizontalNormal.x +
+            delta.y * frame.horizontalNormal.y,
+
+        elevation: Number(point.z),
+
+        relativeElevation: delta.z,
+
+        longitudinal:
+            delta.x * frame.horizontalTangent.x +
+            delta.y * frame.horizontalTangent.y
+    };
+}
+
+function listGeometryRelatedViewerMethods(api) {
+    const methodNames = api && api.viewer
+        ? Object.keys(api.viewer)
+        : [];
+
+    const terms = [
+        "bound",
+        "box",
+        "entity",
+        "geometr",
+        "mesh",
+        "object",
+        "position",
+        "section",
+        "triangle",
+        "vertex"
+    ];
+
+    return methodNames
+        .filter(function (name) {
+            const lower = name.toLowerCase();
+
+            return terms.some(function (term) {
+                return lower.includes(term);
+            });
+        })
+        .sort();
+}
+
+function flattenModelObjects(modelObjects) {
+    const flattened = [];
+
+    if (!Array.isArray(modelObjects)) {
+        return flattened;
+    }
+
+    modelObjects.forEach(function (modelEntry) {
+        const modelId = modelEntry && modelEntry.modelId
+            ? modelEntry.modelId
+            : null;
+
+        const objects = modelEntry && Array.isArray(modelEntry.objects)
+            ? modelEntry.objects
+            : [];
+
+        objects.forEach(function (object) {
+            const runtimeId = Number(object.id);
+
+            if (modelId && Number.isFinite(runtimeId)) {
+                flattened.push({
+                    modelId: modelId,
+                    runtimeId: runtimeId
+                });
+            }
+        });
+    });
+
+    return flattened;
+}
+
+async function getPositionsForObjects(api, objects) {
+    const byModel = new Map();
+
+    objects.forEach(function (object) {
+        if (!byModel.has(object.modelId)) {
+            byModel.set(object.modelId, []);
+        }
+
+        byModel.get(object.modelId).push(object.runtimeId);
+    });
+
+    const positionedObjects = [];
+
+    for (const entry of byModel.entries()) {
+        const modelId = entry[0];
+        const runtimeIds = entry[1];
+        const batches = chunkArray(runtimeIds, 500);
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+            try {
+                const positions = await api.viewer.getObjectPositions(
+                    modelId,
+                    batches[batchIndex]
+                );
+
+                if (!Array.isArray(positions)) {
+                    continue;
+                }
+
+                positions.forEach(function (item) {
+                    if (!item || !item.position) {
+                        return;
+                    }
+
+                    positionedObjects.push({
+                        modelId: modelId,
+                        runtimeId: Number(item.id),
+                        position: {
+                            x: Number(item.position.x),
+                            y: Number(item.position.y),
+                            z: Number(item.position.z)
+                        }
+                    });
+                });
+            }
+            catch (error) {
+                console.warn(
+                    "Posisjonsdiagnose feilet for modell " + modelId + ":",
+                    error
+                );
+            }
+        }
+    }
+
+    return positionedObjects;
+}
+
+async function getPropertiesForCandidates(api, candidates) {
+    const byModel = new Map();
+
+    candidates.forEach(function (candidate) {
+        if (!byModel.has(candidate.modelId)) {
+            byModel.set(candidate.modelId, []);
+        }
+
+        byModel.get(candidate.modelId).push(candidate.runtimeId);
+    });
+
+    const results = [];
+
+    for (const entry of byModel.entries()) {
+        const modelId = entry[0];
+        const runtimeIds = entry[1];
+        const batches = chunkArray(runtimeIds, 200);
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+            try {
+                const properties = await api.viewer.getObjectProperties(
+                    modelId,
+                    batches[batchIndex]
+                );
+
+                if (!Array.isArray(properties)) {
+                    continue;
+                }
+
+                properties.forEach(function (object) {
+                    results.push({
+                        modelId: modelId,
+                        runtimeId: Number(object.id),
+                        className: object.class || "",
+                        name:
+                            object.product && object.product.name
+                                ? object.product.name
+                                : "",
+                        objectType:
+                            object.product && object.product.objectType
+                                ? object.product.objectType
+                                : "",
+                        propertySetNames: Array.isArray(object.properties)
+                            ? object.properties.map(function (set) {
+                                return set.name;
+                            })
+                            : []
+                    });
+                });
+            }
+            catch (error) {
+                console.warn(
+                    "Egenskapsdiagnose feilet for modell " + modelId + ":",
+                    error
+                );
+            }
+        }
+    }
+
+    return results;
+}
+
+async function runGeometryDiagnostic(api, frame, sectionWidth) {
+    const diagnostic = {
+        station: frame.station,
+        sectionWidth: sectionWidth,
+        longitudinalTolerance: 1.0,
+        verticalBelow: 8,
+        verticalAbove: 12,
+        viewerMethods: [],
+        totalObjects: 0,
+        inspectedObjects: 0,
+        positionedObjects: 0,
+        candidateCount: 0,
+        candidates: [],
+        candidateProperties: [],
+        warnings: []
+    };
+
+    if (
+        !api ||
+        !api.viewer ||
+        typeof api.viewer.getObjects !== "function" ||
+        typeof api.viewer.getObjectPositions !== "function"
+    ) {
+        diagnostic.warnings.push(
+            "Viewer API mangler getObjects eller getObjectPositions."
+        );
+        return diagnostic;
+    }
+
+    diagnostic.viewerMethods = listGeometryRelatedViewerMethods(api);
+
+    let modelObjects = null;
+
+    try {
+        modelObjects = await api.viewer.getObjects({});
+    }
+    catch (error) {
+        diagnostic.warnings.push(
+            "getObjects({}) feilet: " +
+            (error && error.message ? error.message : String(error))
+        );
+        return diagnostic;
+    }
+
+    const allObjects = flattenModelObjects(modelObjects);
+    diagnostic.totalObjects = allObjects.length;
+
+    const maximumObjects = 15000;
+    const inspectedObjects = allObjects.slice(0, maximumObjects);
+    diagnostic.inspectedObjects = inspectedObjects.length;
+
+    if (allObjects.length > maximumObjects) {
+        diagnostic.warnings.push(
+            "Diagnosen ble begrenset til de første " +
+            maximumObjects +
+            " objektene."
+        );
+    }
+
+    const positionedObjects = await getPositionsForObjects(
+        api,
+        inspectedObjects
+    );
+
+    diagnostic.positionedObjects = positionedObjects.length;
+
+    const halfWidth = sectionWidth / 2;
+
+    diagnostic.candidates = positionedObjects
+        .map(function (object) {
+            const local = projectWorldPointToSection(
+                object.position,
+                frame
+            );
+
+            return {
+                modelId: object.modelId,
+                runtimeId: object.runtimeId,
+                position: object.position,
+                offset: local.offset,
+                elevation: local.elevation,
+                relativeElevation: local.relativeElevation,
+                longitudinal: local.longitudinal
+            };
+        })
+        .filter(function (object) {
+            return (
+                Math.abs(object.longitudinal) <=
+                    diagnostic.longitudinalTolerance &&
+                Math.abs(object.offset) <= halfWidth &&
+                object.relativeElevation >=
+                    -diagnostic.verticalBelow &&
+                object.relativeElevation <=
+                    diagnostic.verticalAbove
+            );
+        })
+        .sort(function (a, b) {
+            return Math.abs(a.longitudinal) - Math.abs(b.longitudinal);
+        });
+
+    diagnostic.candidateCount = diagnostic.candidates.length;
+
+    const propertyCandidates = diagnostic.candidates.slice(0, 200);
+
+    diagnostic.candidateProperties = await getPropertiesForCandidates(
+        api,
+        propertyCandidates
+    );
+
+    return diagnostic;
+}
+
+// =======================================================
 // SYNLIG SNITTPLAN
 // =======================================================
 
@@ -684,9 +1014,40 @@ async function generateProfile() {
             svgShell
         );
 
+        setStatus("Kjører geometridiagnose...");
+
+        state.geometryDiagnostic = await runGeometryDiagnostic(
+            api,
+            frame,
+            Number.isFinite(sectionWidth) && sectionWidth > 0
+                ? sectionWidth
+                : 50
+        );
+
+        logResult(
+            "GEOMETRIDIAGNOSE",
+            state.geometryDiagnostic
+        );
+
+        console.table(
+            state.geometryDiagnostic.candidates.slice(0, 50)
+        );
+
+        console.table(
+            state.geometryDiagnostic.candidateProperties.slice(0, 50)
+        );
+
+        renderGeometryDiagnostic(
+            profileSvg,
+            state.geometryDiagnostic
+        );
+
         setStatus(
-            "Snittplan og SVG-skall opprettet ved stasjon " +
-            frame.station.toFixed(3)
+            "Snittplan og SVG-skall ved stasjon " +
+            frame.station.toFixed(3) +
+            " - " +
+            state.geometryDiagnostic.candidateCount +
+            " geometrikandidater"
         );
     }
     catch (error) {
