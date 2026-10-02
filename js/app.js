@@ -1,406 +1,115 @@
-alert("app.js lastet");
 import {
-VERSION,
-BUILD_DATE,
-APP_NAME
+    VERSION,
+    BUILD_DATE,
+    APP_NAME
 }
 from "./versions.js";
 
 import {
-connectTC,
-setStatus
+    connectTC,
+    getAPI,
+    setStatus
 }
 from "./tc-api.js";
 
-import {
-setProfile,
-currentProfile
-}
-from "./profile-engine.js";
 
-import {
-drawDemoProfile
-}
-from "./svg-renderer.js";
-
-import {
-createMarker,
-moveMarker,
-markerState
-}
-from "./marker-engine.js";
-
-
-// =====================================================
-// DOM
-// =====================================================
-
-const profileName =
-document.getElementById(
-"profileName"
-);
-
-const profileId =
-document.getElementById(
-"profileId"
-);
-
-const profileLength =
-document.getElementById(
-"profileLength"
-);
-
-const stationInput =
-document.getElementById(
-"stationInput"
-);
-
-const stationSlider =
-document.getElementById(
-"stationSlider"
-);
-
-const stationLabel =
-document.getElementById(
-"stationLabel"
-);
-
-const versionInfo =
-document.getElementById(
-"versionInfo"
-);
-
-const buildInfo =
-document.getElementById(
-"buildInfo"
-);
-
-const btnSelectProfile =
-document.getElementById(
-"btnSelectProfile"
-);
-
-const btnGenerate =
-document.getElementById(
-"btnGenerate"
-);
-
-const btnExportSvg =
-document.getElementById(
-"btnExportSvg"
-);
-
-const btnExportPng =
-document.getElementById(
-"btnExportPng"
-);
-
-const btnMinus1 =
-document.getElementById(
-"minus1"
-);
-
-const btnPlus1 =
-document.getElementById(
-"plus1"
-);
-
-const btnMinus10 =
-document.getElementById(
-"minus10"
-);
-
-const btnPlus10 =
-document.getElementById(
-"plus10"
-);
-
-
-// =====================================================
+// ====================================================
 // INITIALISERING
-// =====================================================
+// ====================================================
 
 async function initialize() {
 
-versionInfo.innerText =
-`Versjon ${VERSION}`;
+    document
+        .getElementById(
+            "versionInfo"
+        )
+        .innerText =
+        `v${VERSION}`;
 
-buildInfo.innerText =
-`Build ${BUILD_DATE}`;
+    document
+        .getElementById(
+            "buildInfo"
+        )
+        .innerText =
+        BUILD_DATE;
 
-await connectTC();
+    const api =
+        await connectTC();
 
-updateStation(0);
+    console.log(
+        "API:",
+        api
+    );
 
-setStatus(
-`${APP_NAME} klar`
-);
+    setStatus(
+        "Klar"
+    );
 }
 
 
-// =====================================================
-// STASJONERING
-// =====================================================
+// ====================================================
+// TEST AV VALGT OBJEKT
+// ====================================================
 
-function updateStation(
-value
-) {
+async function selectProfile() {
 
-const station =
-Number(value);
+    try {
 
-stationInput.value =
-station;
+        const api =
+            getAPI();
 
-stationSlider.value =
-station;
+        console.log(
+            "API ved valg:",
+            api
+        );
 
-stationLabel.innerText =
-station.toFixed(3);
+        if (!api) {
 
-moveMarker(
-station
-);
+            alert(
+                "Ingen API-forbindelse"
+            );
 
-updateStatusBar();
-}
+            return;
+        }
 
-function moveBy(
-distance
-) {
+        console.log(
+            "Alle API-funksjoner:",
+            Object.keys(api)
+        );
 
-const current =
-Number(
-stationSlider.value
-);
+        alert(
+            "Se Console-vinduet"
+        );
+    }
+    catch (err) {
 
-let next =
-current + distance;
+        console.error(
+            err
+        );
 
-const max =
-Number(
-stationSlider.max
-);
-
-if (next < 0)
-next = 0;
-
-if (next > max)
-next = max;
-
-updateStation(
-next
-);
+        alert(
+            err.message
+        );
+    }
 }
 
 
-// =====================================================
-// PROFILVALG
-// =====================================================
-
-function selectProfile() {
-
-/*
-V0.4
-
-Her erstattes demoen
-med faktisk valg
-av objekt fra
-Trimble Connect Viewer
-*/
-
-const profile = {
-
-id: crypto.randomUUID(),
-
-name: "E6_Hovedlinje",
-
-length: 2500
-};
-
-setProfile(
-profile
-);
-
-profileName.value =
-profile.name;
-
-profileId.innerText =
-profile.id;
-
-profileLength.innerText =
-`${profile.length} m`;
-
-stationSlider.max =
-profile.length;
-
-markerState.profileId =
-profile.id;
-
-createMarker();
-
-setStatus(
-"Profil valgt"
-);
-
-updateStatusBar();
-}
-
-
-// =====================================================
-// PROFILGENERERING
-// =====================================================
-
-function generateProfile() {
-
-if (
-!currentProfile ||
-!currentProfile.id
-) {
-
-alert(
-"Velg en profileringslinje først."
-);
-
-return;
-}
-
-drawDemoProfile();
-
-setStatus(
-"Profil generert"
-);
-}
-
-
-// =====================================================
-// STATUS
-// =====================================================
-
-function updateStatusBar() {
-
-let statusText =
-"";
-
-statusText +=
-`${APP_NAME}\n`;
-
-statusText +=
-`Versjon: ${VERSION}\n`;
-
-if (
-currentProfile &&
-currentProfile.id
-) {
-
-statusText +=
-`Profil: ${currentProfile.name}\n`;
-
-statusText +=
-`Stasjon: ${Number(
-stationSlider.value
-).toFixed(3)}`;
-}
+// ====================================================
+// KNAPPER
+// ====================================================
 
 document
-.getElementById(
-"status"
-)
-.innerText =
-statusText;
-}
+    .getElementById(
+        "btnSelectProfile"
+    )
+    .addEventListener(
+        "click",
+        selectProfile
+    );
 
 
-// =====================================================
-// EKSPORT
-// =====================================================
-
-function exportSvg() {
-
-alert(
-"SVG-eksport kommer i v0.4"
-);
-}
-
-function exportPng() {
-
-alert(
-"PNG-eksport kommer i v0.4"
-);
-}
-
-
-// =====================================================
-// EVENTS
-// =====================================================
-
-btnSelectProfile
-.addEventListener(
-"click",
-selectProfile
-);
-
-btnGenerate
-.addEventListener(
-"click",
-generateProfile
-);
-
-btnMinus1
-.addEventListener(
-"click",
-() => moveBy(-1)
-);
-
-btnPlus1
-.addEventListener(
-"click",
-() => moveBy(1)
-);
-
-btnMinus10
-.addEventListener(
-"click",
-() => moveBy(-10)
-);
-
-btnPlus10
-.addEventListener(
-"click",
-() => moveBy(10)
-);
-
-stationSlider
-.addEventListener(
-"input",
-e => updateStation(
-e.target.value
-)
-);
-
-stationInput
-.addEventListener(
-"change",
-e => updateStation(
-e.target.value
-)
-);
-
-btnExportSvg
-.addEventListener(
-"click",
-exportSvg
-);
-
-btnExportPng
-.addEventListener(
-"click",
-exportPng
-);
-
-
-// =====================================================
+// ====================================================
 // START
-// =====================================================
+// ====================================================
 
 initialize();

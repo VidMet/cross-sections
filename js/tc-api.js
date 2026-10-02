@@ -1,37 +1,62 @@
+let API = null;
+
 export async function connectTC() {
-try {
-if (
-window.TrimbleConnectWorkspace
-) {
-await TrimbleConnectWorkspace
-.connect(
-window.parent,
-() => {}
-);
-setStatus(
-"Tilkoblet Trimble Connect"
-);
+
+    try {
+
+        console.log(
+            "Starter Trimble Connect API..."
+        );
+
+        API =
+            await TrimbleConnectWorkspace.connect(
+                window.parent,
+                (event) => {
+
+                    console.log(
+                        "TC EVENT:",
+                        event
+                    );
+
+                }
+            );
+
+        console.log(
+            "Trimble API koblet:",
+            API
+        );
+
+        setStatus(
+            "Trimble API koblet"
+        );
+
+        return API;
+    }
+    catch (err) {
+
+        console.error(
+            "TC FEIL:",
+            err
+        );
+
+        setStatus(
+            "TC API FEIL"
+        );
+
+        return null;
+    }
 }
-else {
-setStatus(
-"Demo-modus"
-);
+
+export function getAPI() {
+
+    return API;
 }
+
+export function setStatus(text) {
+
+    document
+        .getElementById("status")
+        .innerText =
+        text;
 }
-catch(err) {
-console.error(err);
-setStatus(
-"Demo-modus"
-);
-}
-}
-export function setStatus(
-text
-) {
-document
-.getElementById(
-"status"
-)
-.textContent =
-text;
-}
+`
