@@ -2,41 +2,26 @@ import {
     VERSION,
     BUILD_DATE,
     APP_NAME
-}
-from "./versions.js";
+} from "./versions.js";
 
 import {
     connectTC,
     getAPI,
     setStatus
-}
-from "./tc-api.js";
+} from "./tc-api.js";
 
 
 // =======================================================
-// APPLIKASJONSTILSTAND
+// TILSTAND
 // =======================================================
 
 const appState = {
-
     api: null,
-
     modelId: null,
-
     runtimeIds: [],
-
-    externalIds: [],
-
     selectedObject: null,
-
     objectPosition: null,
-
-    hierarchyChildren: [],
-
-    hierarchyParents: [],
-
-    hierarchyTree: [],
-
+    externalObjectIds: [],
     station: 0
 };
 
@@ -95,27 +80,25 @@ const btnPlus10 =
 
 
 // =======================================================
-// GLOBAL FEILHÅNDTERING
+// FEILHÅNDTERING
 // =======================================================
 
-window.addEventListener(
-    "error",
-    event => {
+window.addEventListener("error", function (event) {
 
-        console.error(
-            "GLOBAL JAVASCRIPT-FEIL:",
-            event.error || event.message
-        );
+    console.error(
+        "GLOBAL JAVASCRIPT-FEIL:",
+        event.error || event.message
+    );
 
-        setStatus(
-            "JavaScript-feil – se Console"
-        );
-    }
-);
+    setStatus(
+        "JavaScript-feil – se Console"
+    );
+});
+
 
 window.addEventListener(
     "unhandledrejection",
-    event => {
+    function (event) {
 
         console.error(
             "UHÅNDTERT PROMISE-FEIL:",
@@ -130,25 +113,24 @@ window.addEventListener(
 
 
 // =======================================================
-// HJELPEFUNKSJONER
+// LOGGING
 // =======================================================
 
-function printSection(title) {
+function logSection(title) {
 
     console.log(
-        `===== ${title} =====`
+        "===== " + title + " ====="
     );
 }
 
 
-function safeJson(value) {
+function makeJsonSafe(value) {
 
     return JSON.stringify(
         value,
-        (key, item) => {
+        function (key, item) {
 
             if (typeof item === "bigint") {
-
                 return item.toString();
             }
 
@@ -159,39 +141,37 @@ function safeJson(value) {
 }
 
 
-function printResult(title, value) {
+function logResult(title, value) {
 
-    printSection(title);
+    logSection(title);
 
     console.dir(value);
 
     try {
 
         console.log(
-            safeJson(value)
+            makeJsonSafe(value)
         );
     }
     catch (error) {
 
         console.warn(
-            `${title} kunne ikke serialiseres:`,
+            title +
+            " kunne ikke konverteres til JSON:",
             error
         );
     }
 }
 
 
-async function runApiTest(
-    title,
-    callback
-) {
+async function runTest(title, callback) {
 
     try {
 
         const result =
             await callback();
 
-        printResult(
+        logResult(
             title,
             result
         );
@@ -201,7 +181,7 @@ async function runApiTest(
     catch (error) {
 
         console.warn(
-            `${title} FEILET:`,
+            title + " FEILET:",
             error
         );
 
@@ -210,24 +190,8 @@ async function runApiTest(
 }
 
 
-function getFirstObject(
-    value
-) {
-
-    if (
-        Array.isArray(value) &&
-        value.length > 0
-    ) {
-
-        return value[0];
-    }
-
-    return null;
-}
-
-
 // =======================================================
-// VERSJON
+// VERSJONSVISNING
 // =======================================================
 
 function initializeVersionInfo() {
@@ -235,7 +199,7 @@ function initializeVersionInfo() {
     if (versionInfo) {
 
         versionInfo.innerText =
-            `v${VERSION}`;
+            "v" + VERSION;
     }
 
     if (buildInfo) {
@@ -267,9 +231,16 @@ function initializeVersionInfo() {
 
 async function initialize() {
 
-    printSection(
+    logSection(
         "START"
     );
+
+    /*
+        Denne kjøres før Trimble-tilkoblingen.
+
+        Dermed skal versjonen vises selv om
+        Workspace API-tilkoblingen feiler.
+    */
 
     initializeVersionInfo();
 
@@ -293,15 +264,8 @@ async function initialize() {
         }
 
         console.log(
-            "API-nøkler:",
+            "API KEYS:",
             Object.keys(appState.api)
-        );
-
-        console.log(
-            "Viewer-metoder:",
-            Object.keys(
-                appState.api.viewer || {}
-            )
         );
 
         setStatus(
@@ -320,50 +284,51 @@ async function initialize() {
         );
     }
 
-    printSection(
+    logSection(
         "INITIALISERING FERDIG"
     );
 }
 
 
 // =======================================================
-// UI FOR VALGT PROFIL
+// OPPDATER VALGT PROFIL I UI
 // =======================================================
 
 function updateProfileUi(
-    objectData,
+    selectedObject,
     runtimeId
 ) {
 
-    const name =
-        objectData?.product?.name ||
-        objectData?.name ||
-        "Ukjent profil";
+    const objectName =
+        selectedObject &&
+        selectedObject.product &&
+        selectedObject.product.name
+            ? selectedObject.product.name
+            : "Ukjent profil";
 
     const objectType =
-        objectData?.product?.objectType ||
-        objectData?.class ||
-        "Ukjent objekttype";
+        selectedObject &&
+        selectedObject.product &&
+        selectedObject.product.objectType
+            ? selectedObject.product.objectType
+            : (
+                selectedObject &&
+                selectedObject.class
+                    ? selectedObject.class
+                    : "Ukjent objekttype"
+            );
 
     if (profileName) {
 
         profileName.value =
-            name;
+            objectName;
     }
 
     if (profileId) {
 
         profileId.innerText =
-            runtimeId;
+            String(runtimeId);
     }
-
-    /*
-        HTML-en har foreløpig bare feltene
-        ID og Lengde.
-
-        Inntil profileType legges til i HTML,
-        brukes profileLength til å vise type.
-    */
 
     const profileType =
         document.getElementById(
@@ -383,18 +348,25 @@ function updateProfileUi(
     }
     else if (profileLength) {
 
+        /*
+            Dagens HTML har ikke eget Type-felt.
+
+            Derfor vises objekttypen midlertidig
+            i feltet som er merket Lengde.
+        */
+
         profileLength.innerText =
             objectType;
     }
 
     console.log(
         "Valgt alignment:",
-        name
+        objectName
     );
 
     console.log(
         "IFC-klasse:",
-        objectData?.class
+        selectedObject.class
     );
 
     console.log(
@@ -410,7 +382,7 @@ function updateProfileUi(
 
 
 // =======================================================
-// TEST: EKSTERN OBJEKT-ID
+// TEST AV EKSTERN OBJEKT-ID
 // =======================================================
 
 async function testExternalObjectIds(
@@ -420,31 +392,34 @@ async function testExternalObjectIds(
 ) {
 
     if (
-        typeof api.viewer
-            .convertToObjectIds !== "function"
+        !api.viewer ||
+        typeof api.viewer.convertToObjectIds !==
+            "function"
     ) {
 
         console.warn(
-            "convertToObjectIds finnes ikke."
+            "convertToObjectIds er ikke tilgjengelig."
         );
 
         return null;
     }
 
     const result =
-        await runApiTest(
+        await runTest(
             "EKSTERNE OBJEKT-ID-ER",
-            () =>
-                api.viewer
+            function () {
+
+                return api.viewer
                     .convertToObjectIds(
                         modelId,
                         runtimeIds
-                    )
+                    );
+            }
         );
 
     if (Array.isArray(result)) {
 
-        appState.externalIds =
+        appState.externalObjectIds =
             result;
     }
 
@@ -453,7 +428,7 @@ async function testExternalObjectIds(
 
 
 // =======================================================
-// TEST: OBJEKTPOSISJON
+// TEST AV OBJEKTPOSISJON
 // =======================================================
 
 async function testObjectPositions(
@@ -463,50 +438,46 @@ async function testObjectPositions(
 ) {
 
     if (
-        typeof api.viewer
-            .getObjectPositions !== "function"
+        !api.viewer ||
+        typeof api.viewer.getObjectPositions !==
+            "function"
     ) {
 
         console.warn(
-            "getObjectPositions finnes ikke."
+            "getObjectPositions er ikke tilgjengelig."
         );
 
         return null;
     }
 
     const result =
-        await runApiTest(
+        await runTest(
             "OBJEKTPOSISJONER",
-            () =>
-                api.viewer
+            function () {
+
+                return api.viewer
                     .getObjectPositions(
                         modelId,
                         runtimeIds
-                    )
+                    );
+            }
         );
 
-    const first =
-        getFirstObject(result);
-
-    if (first?.position) {
+    if (
+        Array.isArray(result) &&
+        result.length > 0 &&
+        result[0].position
+    ) {
 
         appState.objectPosition = {
-
-            id:
-                first.id,
-
-            x:
-                first.position.x,
-
-            y:
-                first.position.y,
-
-            z:
-                first.position.z
+            id: result[0].id,
+            x: result[0].position.x,
+            y: result[0].position.y,
+            z: result[0].position.z
         };
 
         console.log(
-            "Alignmentens objektanker:",
+            "Objektanker:",
             appState.objectPosition
         );
     }
@@ -516,7 +487,7 @@ async function testObjectPositions(
 
 
 // =======================================================
-// TEST: GET OBJECTS
+// TEST AV GETOBJECTS
 // =======================================================
 
 async function testObjects(
@@ -526,37 +497,33 @@ async function testObjects(
 ) {
 
     if (
-        typeof api.viewer
-            .getObjects !== "function"
+        !api.viewer ||
+        typeof api.viewer.getObjects !==
+            "function"
     ) {
 
         console.warn(
-            "getObjects finnes ikke."
+            "getObjects er ikke tilgjengelig."
         );
 
         return null;
     }
 
     /*
-        Vi avgrenser søket til valgt modell og
-        valgte RuntimeId-er.
+        ObjectSelector inneholder en liste med
+        ModelObjectIds.
 
-        recursive = true gjør det mulig å se om
-        Trimble returnerer relaterte underobjekter.
+        ModelObjectIds inneholder modelId,
+        objectRuntimeIds og recursive.
     */
 
     const selector = {
 
         modelObjectIds: [
             {
-                modelId:
-                    modelId,
-
-                objectRuntimeIds:
-                    runtimeIds,
-
-                recursive:
-                    true
+                modelId: modelId,
+                objectRuntimeIds: runtimeIds,
+                recursive: true
             }
         ]
     };
@@ -566,18 +533,21 @@ async function testObjects(
         selector
     );
 
-    return await runApiTest(
-        "GET OBJECTS – VALGT OBJEKT",
-        () =>
-            api.viewer.getObjects(
-                selector
-            )
+    return await runTest(
+        "GETOBJECTS",
+        function () {
+
+            return api.viewer
+                .getObjects(
+                    selector
+                );
+        }
     );
 }
 
 
 // =======================================================
-// TEST: DIREKTE HIERARKIBARN
+// TEST AV DIREKTE HIERARKIBARN
 // =======================================================
 
 async function testDirectChildren(
@@ -587,41 +557,35 @@ async function testDirectChildren(
 ) {
 
     if (
+        !api.viewer ||
         typeof api.viewer
             .getHierarchyChildren !==
-        "function"
+            "function"
     ) {
 
         console.warn(
-            "getHierarchyChildren finnes ikke."
+            "getHierarchyChildren er ikke tilgjengelig."
         );
 
         return null;
     }
 
-    const result =
-        await runApiTest(
-            "DIREKTE HIERARKIBARN",
-            () =>
-                api.viewer
-                    .getHierarchyChildren(
-                        modelId,
-                        runtimeIds
-                    )
-        );
+    return await runTest(
+        "DIREKTE HIERARKIBARN",
+        function () {
 
-    if (Array.isArray(result)) {
-
-        appState.hierarchyChildren =
-            result;
-    }
-
-    return result;
+            return api.viewer
+                .getHierarchyChildren(
+                    modelId,
+                    runtimeIds
+                );
+        }
+    );
 }
 
 
 // =======================================================
-// TEST: REKURSIVT HIERARKI
+// TEST AV REKURSIVE HIERARKIBARN
 // =======================================================
 
 async function testRecursiveChildren(
@@ -631,48 +595,41 @@ async function testRecursiveChildren(
 ) {
 
     if (
+        !api.viewer ||
         typeof api.viewer
             .getHierarchyChildren !==
-        "function"
+            "function"
     ) {
 
         return null;
     }
 
     /*
-        Tredje parameter er hierarchyType.
+        undefined:
+        bruk standard hierarkitype.
 
-        undefined gjør at Workspace API bruker
-        standard hierarkitype.
-
-        Fjerde parameter true betyr rekursivt.
+        true:
+        hent hele undertreet rekursivt.
     */
 
-    const result =
-        await runApiTest(
-            "REKURSIVT HIERARKI",
-            () =>
-                api.viewer
-                    .getHierarchyChildren(
-                        modelId,
-                        runtimeIds,
-                        undefined,
-                        true
-                    )
-        );
+    return await runTest(
+        "REKURSIVE HIERARKIBARN",
+        function () {
 
-    if (Array.isArray(result)) {
-
-        appState.hierarchyTree =
-            result;
-    }
-
-    return result;
+            return api.viewer
+                .getHierarchyChildren(
+                    modelId,
+                    runtimeIds,
+                    undefined,
+                    true
+                );
+        }
+    );
 }
 
 
 // =======================================================
-// TEST: HIERARKIFORELDRE
+// TEST AV HIERARKIFORELDRE
 // =======================================================
 
 async function testHierarchyParents(
@@ -682,86 +639,38 @@ async function testHierarchyParents(
 ) {
 
     if (
+        !api.viewer ||
         typeof api.viewer
             .getHierarchyParents !==
-        "function"
+            "function"
     ) {
 
         console.warn(
-            "getHierarchyParents finnes ikke."
+            "getHierarchyParents er ikke tilgjengelig."
         );
 
         return null;
     }
 
-    const result =
-        await runApiTest(
-            "HIERARKIFORELDRE",
-            () =>
-                api.viewer
-                    .getHierarchyParents(
-                        modelId,
-                        runtimeIds,
-                        undefined,
-                        true,
-                        false
-                    )
-        );
+    return await runTest(
+        "HIERARKIFORELDRE",
+        function () {
 
-    if (Array.isArray(result)) {
-
-        appState.hierarchyParents =
-            result;
-    }
-
-    return result;
-}
-
-
-// =======================================================
-// TEST: GET ENTITIES
-// =======================================================
-
-async function testEntities(
-    api,
-    modelId,
-    runtimeIds
-) {
-
-    if (
-        typeof api.viewer
-            .getEntities !== "function"
-    ) {
-
-        console.log(
-            "getEntities er ikke tilgjengelig " +
-            "i denne ViewerAPI-versjonen."
-        );
-
-        return null;
-    }
-
-    /*
-        Metoden finnes i API-instansen hos deg,
-        men parameterformatet må verifiseres.
-
-        Første forsøk bruker modell-ID og
-        RuntimeId-er.
-    */
-
-    return await runApiTest(
-        "GET ENTITIES",
-        () =>
-            api.viewer.getEntities(
-                modelId,
-                runtimeIds
-            )
+            return api.viewer
+                .getHierarchyParents(
+                    modelId,
+                    runtimeIds,
+                    undefined,
+                    true,
+                    false
+                );
+        }
     );
 }
 
 
 // =======================================================
-// ANALYSE AV HIERARKIRESULTATER
+// OPPSUMMERING AV HIERARKI
 // =======================================================
 
 function summarizeHierarchy(
@@ -770,7 +679,7 @@ function summarizeHierarchy(
     parents
 ) {
 
-    printSection(
+    logSection(
         "HIERARKIOPPSUMMERING"
     );
 
@@ -795,57 +704,64 @@ function summarizeHierarchy(
             : "Ingen resultat"
     );
 
-    const combined = [
+    const allChildren = [];
 
-        ...(Array.isArray(directChildren)
-            ? directChildren
-            : []),
+    if (Array.isArray(directChildren)) {
 
-        ...(Array.isArray(recursiveChildren)
-            ? recursiveChildren
-            : [])
-    ];
+        allChildren.push.apply(
+            allChildren,
+            directChildren
+        );
+    }
 
-    const interestingTerms = [
+    if (Array.isArray(recursiveChildren)) {
 
+        allChildren.push.apply(
+            allChildren,
+            recursiveChildren
+        );
+    }
+
+    const relevantWords = [
         "IFCALIGNMENT",
-
         "ALIGNMENT",
-
         "HORIZONTAL",
-
         "VERTICAL",
-
         "SEGMENT",
-
         "CURVE"
     ];
 
     const possibleSegments =
-        combined.filter(item => {
+        allChildren.filter(
+            function (item) {
 
-            let text = "";
+                let text = "";
 
-            try {
+                try {
 
-                text =
-                    safeJson(item)
-                        .toUpperCase();
+                    text =
+                        makeJsonSafe(item)
+                            .toUpperCase();
+                }
+                catch (error) {
+
+                    text =
+                        String(item)
+                            .toUpperCase();
+                }
+
+                return relevantWords.some(
+                    function (word) {
+
+                        return text.includes(
+                            word
+                        );
+                    }
+                );
             }
-            catch {
+        );
 
-                text =
-                    String(item)
-                        .toUpperCase();
-            }
-
-            return interestingTerms.some(
-                term =>
-                    text.includes(term)
-            );
-        });
-
-    printResult(
+    logResult(
         "MULIGE ALIGNMENTSEGMENTER",
         possibleSegments
     );
@@ -865,10 +781,17 @@ async function selectProfile() {
         const api =
             getAPI();
 
-        if (!api?.viewer) {
+        if (
+            !api ||
+            !api.viewer
+        ) {
 
             setStatus(
                 "Viewer API er ikke tilgjengelig"
+            );
+
+            alert(
+                "Viewer API er ikke tilgjengelig."
             );
 
             return;
@@ -882,7 +805,7 @@ async function selectProfile() {
             await api.viewer
                 .getSelection();
 
-        printResult(
+        logResult(
             "SELECTION",
             selection
         );
@@ -929,8 +852,8 @@ async function selectProfile() {
         ) {
 
             throw new Error(
-                "Seleksjonen mangler modelId " +
-                "eller objectRuntimeIds."
+                "Seleksjonen inneholder ikke " +
+                "modelId og objectRuntimeIds."
             );
         }
 
@@ -938,7 +861,7 @@ async function selectProfile() {
             modelId;
 
         appState.runtimeIds =
-            [...runtimeIds];
+            runtimeIds.slice();
 
         console.log(
             "MODEL ID:",
@@ -957,7 +880,7 @@ async function selectProfile() {
                     runtimeIds
                 );
 
-        printResult(
+        logResult(
             "OBJECT PROPERTIES",
             properties
         );
@@ -968,12 +891,11 @@ async function selectProfile() {
         ) {
 
             alert(
-                "Fant ingen egenskaper for " +
-                "det valgte objektet."
+                "Fant ingen egenskaper for objektet."
             );
 
             setStatus(
-                "Objektet mangler egenskaper"
+                "Ingen objektegenskaper"
             );
 
             return;
@@ -1001,28 +923,27 @@ async function selectProfile() {
         ) {
 
             console.warn(
-                "Valgt objekt er ikke " +
-                "IFCALIGNMENT:",
+                "Valgt objekt er ikke IFCALIGNMENT:",
                 ifcClass
             );
 
             setStatus(
-                `Valgt objekt er ${ifcClass}`
+                "Valgt objekt er " +
+                ifcClass
             );
         }
         else {
 
             setStatus(
-                "IfcAlignment valgt – tester hierarki..."
+                "IfcAlignment valgt – tester hierarki"
             );
         }
 
         /*
             Testene kjøres sekvensielt.
 
-            Dette gir ryddigere Console-utskrift
-            og reduserer risikoen for at flere
-            tunge Viewer-kall kolliderer.
+            En feil i én test blir håndtert av
+            runTest og stopper ikke neste test.
         */
 
         await testExternalObjectIds(
@@ -1043,4 +964,310 @@ async function selectProfile() {
             runtimeIds
         );
 
-   
+        const directChildren =
+            await testDirectChildren(
+                api,
+                modelId,
+                runtimeIds
+            );
+
+        const recursiveChildren =
+            await testRecursiveChildren(
+                api,
+                modelId,
+                runtimeIds
+            );
+
+        const parents =
+            await testHierarchyParents(
+                api,
+                modelId,
+                runtimeIds
+            );
+
+        const possibleSegments =
+            summarizeHierarchy(
+                directChildren,
+                recursiveChildren,
+                parents
+            );
+
+        if (
+            possibleSegments.length > 0
+        ) {
+
+            setStatus(
+                "Profil valgt – fant " +
+                possibleSegments.length +
+                " mulige segmenter"
+            );
+        }
+        else {
+
+            setStatus(
+                "Profil valgt – ingen segmenter " +
+                "funnet i standardhierarkiet"
+            );
+        }
+
+        logSection(
+            "PROFILTEST FERDIG"
+        );
+    }
+    catch (error) {
+
+        console.error(
+            "FEIL VED PROFILVALG:",
+            error
+        );
+
+        setStatus(
+            "Feil ved lesing av profil"
+        );
+
+        alert(
+            error &&
+            error.message
+                ? error.message
+                : String(error)
+        );
+    }
+}
+
+
+// =======================================================
+// STASJONERING
+// =======================================================
+
+function updateStation(value) {
+
+    let station =
+        Number(value);
+
+    if (!Number.isFinite(station)) {
+
+        station = 0;
+    }
+
+    let maximum =
+        0;
+
+    if (stationSlider) {
+
+        maximum =
+            Number(
+                stationSlider.max
+            );
+    }
+
+    if (!Number.isFinite(maximum)) {
+
+        maximum = 0;
+    }
+
+    station =
+        Math.max(
+            0,
+            Math.min(
+                station,
+                maximum
+            )
+        );
+
+    appState.station =
+        station;
+
+    if (stationInput) {
+
+        stationInput.value =
+            String(station);
+    }
+
+    if (stationSlider) {
+
+        stationSlider.value =
+            String(station);
+    }
+
+    if (stationLabel) {
+
+        stationLabel.innerText =
+            station.toFixed(3);
+    }
+}
+
+
+function moveStation(offset) {
+
+    updateStation(
+        appState.station +
+        offset
+    );
+}
+
+
+// =======================================================
+// GENERERING OG EKSPORT
+// =======================================================
+
+function generateProfile() {
+
+    if (!appState.selectedObject) {
+
+        alert(
+            "Velg en profileringslinje først."
+        );
+
+        return;
+    }
+
+    console.log(
+        "Generer profil ved stasjon:",
+        appState.station
+    );
+
+    setStatus(
+        "Tverrprofilmotor er ikke implementert ennå"
+    );
+}
+
+
+function exportSvg() {
+
+    setStatus(
+        "SVG-eksport er ikke implementert ennå"
+    );
+}
+
+
+function exportPng() {
+
+    setStatus(
+        "PNG-eksport er ikke implementert ennå"
+    );
+}
+
+
+// =======================================================
+// EVENTS
+// =======================================================
+
+function bindEvents() {
+
+    if (btnSelectProfile) {
+
+        btnSelectProfile.addEventListener(
+            "click",
+            selectProfile
+        );
+    }
+
+    if (btnGenerate) {
+
+        btnGenerate.addEventListener(
+            "click",
+            generateProfile
+        );
+    }
+
+    if (btnExportSvg) {
+
+        btnExportSvg.addEventListener(
+            "click",
+            exportSvg
+        );
+    }
+
+    if (btnExportPng) {
+
+        btnExportPng.addEventListener(
+            "click",
+            exportPng
+        );
+    }
+
+    if (btnMinus10) {
+
+        btnMinus10.addEventListener(
+            "click",
+            function () {
+
+                moveStation(-10);
+            }
+        );
+    }
+
+    if (btnMinus1) {
+
+        btnMinus1.addEventListener(
+            "click",
+            function () {
+
+                moveStation(-1);
+            }
+        );
+    }
+
+    if (btnPlus1) {
+
+        btnPlus1.addEventListener(
+            "click",
+            function () {
+
+                moveStation(1);
+            }
+        );
+    }
+
+    if (btnPlus10) {
+
+        btnPlus10.addEventListener(
+            "click",
+            function () {
+
+                moveStation(10);
+            }
+        );
+    }
+
+    if (stationSlider) {
+
+        stationSlider.addEventListener(
+            "input",
+            function (event) {
+
+                updateStation(
+                    event.target.value
+                );
+            }
+        );
+    }
+
+    if (stationInput) {
+
+        stationInput.addEventListener(
+            "change",
+            function (event) {
+
+                updateStation(
+                    event.target.value
+                );
+            }
+        );
+    }
+
+    console.log(
+        "Events registrert"
+    );
+}
+
+
+// =======================================================
+// START
+// =======================================================
+
+initializeVersionInfo();
+
+bindEvents();
+
+initialize();
