@@ -448,13 +448,16 @@ async function updateStationMarker(frame) {
 
     const marker = {
         id: appState.markerId,
+
         position: {
             x: frame.position.x,
             y: frame.position.y,
-            z: frame.position.z + 1.5
+            z: frame.position.z + 0.5
         },
+
         iconPath: MARKER_ICON_URL,
-        size: 48
+
+        size: 30
     };
 
     try {
