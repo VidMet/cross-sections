@@ -174,62 +174,28 @@ async function initialize() {
 
 async function selectProfile() {
 
-    try {
+    const api =
+        getAPI();
 
-        const api = getAPI();
+    console.log(
+        "===== API KEYS ====="
+    );
 
-        console.log(
-            "===================================="
-        );
-
-        console.log(
-            "TRIMBLE API"
-        );
-
-        console.log(
-            "===================================="
-        );
-
-        const keys =
-            Object.keys(api);
-
-        console.log(
-            "ANTALL NØKLER:",
-            keys.length
-        );
-
-        keys.forEach(
-            (key, index) => {
-
+    Object.keys(api)
+        .forEach(
+            key =>
                 console.log(
-                    `[${index}] ${key}`
-                );
-
-            }
+                    key
+                )
         );
 
-        console.table(keys);
+    console.log(
+        "===== END ====="
+    );
 
-        console.log(
-            "===================================="
-        );
-
-        alert(
-            "API skrevet ut til Console"
-        );
-
-    }
-    catch(err) {
-
-        console.error(
-            "selectProfile FEIL:",
-            err
-        );
-
-        alert(
-            err.message
-        );
-    }
+    setStatus(
+        "Velg et objekt i modellen og se Console"
+    );
 }
 
 
