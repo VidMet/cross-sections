@@ -43,7 +43,7 @@ const btnPlus1 = document.getElementById("plus1");
 const btnPlus10 = document.getElementById("plus10");
 
 const MARKER_ICON_URL = new URL(
-    "../assets/station-marker.svg",
+    "../assets/station-marker.png",
     import.meta.url
 ).href;
 
