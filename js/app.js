@@ -206,18 +206,6 @@ async function selectProfile() {
                 runtimeIds
             );
 
-        if (
-            !properties ||
-            properties.length === 0
-        ) {
-
-            alert(
-                "Fant ingen properties."
-            );
-
-            return;
-        }
-
         const obj =
             properties[0];
 
@@ -263,6 +251,35 @@ async function selectProfile() {
             "RuntimeId:",
             runtimeId
         );
+
+        // ------------------------------------
+        // GEOMETRITEST
+        // ------------------------------------
+
+        try {
+
+            const positions =
+                await api.viewer.getObjectPositions(
+                    modelId,
+                    runtimeIds
+                );
+
+            console.log(
+                "===== POSITIONS ====="
+            );
+
+            console.dir(
+                positions
+            );
+
+        }
+        catch(positionError) {
+
+            console.error(
+                "POSITION ERROR:",
+                positionError
+            );
+        }
 
         setStatus(
             "Profil valgt"
