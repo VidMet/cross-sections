@@ -176,30 +176,73 @@ async function selectProfile() {
 
     try {
 
-        const api =
-            getAPI();
+        const api = getAPI();
 
         const selection =
             await api.viewer.getSelection();
 
         console.log(
-            JSON.stringify(
-                selection,
-                null,
-                2
-            )
+            "SELECTION:",
+            selection
+        );
+
+        if (
+            !selection ||
+            selection.length === 0
+        ) {
+
+            alert(
+                "Ingen objekter valgt"
+            );
+
+            return;
+        }
+
+        const modelId =
+            selection[0].modelId;
+
+        const runtimeIds =
+            selection[0].objectRuntimeIds;
+
+        console.log(
+            "MODEL:",
+            modelId
+        );
+
+        console.log(
+            "RUNTIME IDS:",
+            runtimeIds
+        );
+
+        const properties =
+            await api.viewer.getObjectProperties(
+                modelId,
+                runtimeIds
+            );
+
+        console.log(
+            "===== PROPERTIES ====="
+        );
+
+        console.dir(
+            properties
         );
 
         alert(
-            "Selection skrevet som JSON til Console"
+            "Properties skrevet til Console"
         );
 
     }
     catch(err) {
 
-        console.error(err);
+        console.error(
+            "PROPERTY ERROR:",
+            err
+        );
 
-        alert(err.message);
+        alert(
+            err.message
+        );
     }
 }
 
