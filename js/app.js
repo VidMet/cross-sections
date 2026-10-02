@@ -176,34 +176,30 @@ async function selectProfile() {
 
     try {
 
-        const api = getAPI();
+        const api =
+            getAPI();
 
         const selection =
             await api.viewer.getSelection();
 
         console.log(
-            "===== SELECTION ====="
-        );
-
-        console.dir(
-            selection
+            JSON.stringify(
+                selection,
+                null,
+                2
+            )
         );
 
         alert(
-            "Selection skrevet til Console"
+            "Selection skrevet som JSON til Console"
         );
 
     }
     catch(err) {
 
-        console.error(
-            "SELECTION ERROR:",
-            err
-        );
+        console.error(err);
 
-        alert(
-            err.message
-        );
+        alert(err.message);
     }
 }
 
