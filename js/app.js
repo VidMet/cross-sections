@@ -188,7 +188,7 @@ async function selectProfile() {
         ) {
 
             alert(
-                "Ingen objekt valgt"
+                "Ingen objekt valgt."
             );
 
             return;
@@ -206,67 +206,72 @@ async function selectProfile() {
                 runtimeIds
             );
 
-        console.log(
-            "===== PROPERTIES ====="
-        );
+        if (
+            !properties ||
+            properties.length === 0
+        ) {
 
-        console.dir(
-            properties
-        );
+            alert(
+                "Fant ingen properties."
+            );
 
-        // Vis første objekt
+            return;
+        }
 
-        const first =
+        const obj =
             properties[0];
 
+        const objectName =
+            obj.product?.name ||
+            "Ukjent";
+
+        const objectType =
+            obj.product?.objectType ||
+            obj.class ||
+            "Ukjent";
+
+        const runtimeId =
+            obj.id ||
+            runtimeIds[0];
+
         document.getElementById(
             "profileName"
         ).value =
-            first.product.name;
+            objectName;
 
         document.getElementById(
             "profileId"
         ).innerText =
-            first.id;
+            runtimeId;
 
         document.getElementById(
             "profileLength"
         ).innerText =
-            first.product.objectType;
+            objectType;
 
         console.log(
-            "===== FØRSTE OBJEKT ====="
+            "Valgt alignment:",
+            objectName
         );
 
-        console.dir(
-            first
+        console.log(
+            "Objekttype:",
+            objectType
         );
 
-        document.getElementById(
-            "profileName"
-        ).value =
-            "RuntimeId " +
-            runtimeIds[0];
+        console.log(
+            "RuntimeId:",
+            runtimeId
+        );
 
-        document.getElementById(
-            "profileId"
-        ).innerText =
-            runtimeIds[0];
-
-        document.getElementById(
-            "profileLength"
-        ).innerText =
-            modelId;
-
-        alert(
-            "Properties dumpet til Console"
+        setStatus(
+            "Profil valgt"
         );
 
     }
     catch(err) {
 
         console.error(
-            "PROPERTY ERROR:",
             err
         );
 
