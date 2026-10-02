@@ -5,13 +5,25 @@ export async function connectTC() {
     try {
 
         console.log(
-            "Starter Trimble Connect API..."
+            "Starter Trimble Connect API"
         );
+
+        if (
+            typeof TrimbleConnectWorkspace ===
+            "undefined"
+        ) {
+
+            console.error(
+                "TrimbleConnectWorkspace ikke funnet"
+            );
+
+            return null;
+        }
 
         API =
             await TrimbleConnectWorkspace.connect(
                 window.parent,
-                (event) => {
+                function (event) {
 
                     console.log(
                         "TC EVENT:",
@@ -22,12 +34,8 @@ export async function connectTC() {
             );
 
         console.log(
-            "Trimble API koblet:",
+            "Trimble API:",
             API
-        );
-
-        setStatus(
-            "Trimble API koblet"
         );
 
         return API;
@@ -35,12 +43,8 @@ export async function connectTC() {
     catch (err) {
 
         console.error(
-            "TC FEIL:",
+            "connectTC FEIL:",
             err
-        );
-
-        setStatus(
-            "TC API FEIL"
         );
 
         return null;
@@ -54,9 +58,14 @@ export function getAPI() {
 
 export function setStatus(text) {
 
-    document
-        .getElementById("status")
-        .innerText =
-        text;
+    const element =
+        document.getElementById(
+            "status"
+        );
+
+    if (element) {
+
+        element.innerText =
+            text;
+    }
 }
-`
