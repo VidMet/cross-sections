@@ -173,53 +173,50 @@ async function initialize() {
 // =======================================================
 
 async function selectProfile() {
-
-    console.log(
-        "Velg profileringslinje trykket"
-    );
-
-    try {
-
-        const api =
-            getAPI();
-
-        console.log(
-            "API:",
-            api
-        );
-
-        if (!api) {
-
-            alert(
-                "Ingen API tilgjengelig. Se Console."
-            );
-
-            return;
-        }
-
-        console.log(
-            "API KEYS:"
-        );
-
-        console.log(
-            Object.keys(api)
-        );
-
-        alert(
-            "API dumpet til Console"
-        );
-    }
-    catch (err) {
-
-        console.error(
-            "VELG PROFIL FEIL:",
-            err
-        );
-
-        alert(
-            err.message
-        );
-    }
+ 
+try {
+ 
+const api = getAPI();
+ 
+console.log(
+"================================"
+);
+ 
+console.log(
+"TRIMBLE API DUMP"
+);
+ 
+console.log(
+"================================"
+);
+ 
+console.dir(api);
+ 
+console.log(
+"================================"
+);
+ 
+Object.keys(api).forEach(
+key => {
+ 
+console.log(
+key,
+api[key]
+);
+ 
+}
+);
+ 
+alert(
+"API dumpet til Console"
+);
+}
+catch(err) {
+ 
+console.error(err);
+ 
+alert(err.message);
+}
 }
 
 
