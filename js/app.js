@@ -173,50 +173,63 @@ async function initialize() {
 // =======================================================
 
 async function selectProfile() {
- 
-try {
- 
-const api = getAPI();
- 
-console.log(
-"================================"
-);
- 
-console.log(
-"TRIMBLE API DUMP"
-);
- 
-console.log(
-"================================"
-);
- 
-console.dir(api);
- 
-console.log(
-"================================"
-);
- 
-Object.keys(api).forEach(
-key => {
- 
-console.log(
-key,
-api[key]
-);
- 
-}
-);
- 
-alert(
-"API dumpet til Console"
-);
-}
-catch(err) {
- 
-console.error(err);
- 
-alert(err.message);
-}
+
+    try {
+
+        const api = getAPI();
+
+        console.log(
+            "===================================="
+        );
+
+        console.log(
+            "TRIMBLE API"
+        );
+
+        console.log(
+            "===================================="
+        );
+
+        const keys =
+            Object.keys(api);
+
+        console.log(
+            "ANTALL NØKLER:",
+            keys.length
+        );
+
+        keys.forEach(
+            (key, index) => {
+
+                console.log(
+                    `[${index}] ${key}`
+                );
+
+            }
+        );
+
+        console.table(keys);
+
+        console.log(
+            "===================================="
+        );
+
+        alert(
+            "API skrevet ut til Console"
+        );
+
+    }
+    catch(err) {
+
+        console.error(
+            "selectProfile FEIL:",
+            err
+        );
+
+        alert(
+            err.message
+        );
+    }
 }
 
 

@@ -26,9 +26,14 @@ export async function connectTC() {
                 function (event) {
 
                     console.log(
-                        "TC EVENT:",
-                        event
-                    );
+						"TC EVENT TYPE:",
+						event.type
+						);
+						 
+					console.log(
+						"TC EVENT DATA:",
+						event
+						);
 
                 }
             );
