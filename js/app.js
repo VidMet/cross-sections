@@ -176,15 +176,11 @@ async function selectProfile() {
 
     try {
 
-        const api = getAPI();
+        const api =
+            getAPI();
 
         const selection =
             await api.viewer.getSelection();
-
-        console.log(
-            "SELECTION:",
-            selection
-        );
 
         if (
             !selection ||
@@ -192,7 +188,7 @@ async function selectProfile() {
         ) {
 
             alert(
-                "Ingen objekter valgt"
+                "Ingen objekt valgt"
             );
 
             return;
@@ -204,16 +200,6 @@ async function selectProfile() {
         const runtimeIds =
             selection[0].objectRuntimeIds;
 
-        console.log(
-            "MODEL:",
-            modelId
-        );
-
-        console.log(
-            "RUNTIME IDS:",
-            runtimeIds
-        );
-
         const properties =
             await api.viewer.getObjectProperties(
                 modelId,
@@ -221,31 +207,31 @@ async function selectProfile() {
             );
 
         console.log(
-            "===== PROPERTIES JSON ====="
+            "===== PROPERTIES ====="
         );
 
-        console.log(
-            JSON.stringify(
-                properties,
-                null,
-                2
-            )
+        console.dir(
+            properties
         );
+
+        // Vis første objekt
+
+        const first =
+            properties[0];
 
         console.log(
             "===== FØRSTE OBJEKT ====="
         );
 
         console.dir(
-            properties[0]
+            first
         );
-
-        // Midlertidig visning i UI
 
         document.getElementById(
             "profileName"
         ).value =
-            `RuntimeId ${runtimeIds[0]}`;
+            "RuntimeId " +
+            runtimeIds[0];
 
         document.getElementById(
             "profileId"
@@ -258,7 +244,7 @@ async function selectProfile() {
             modelId;
 
         alert(
-            "Properties skrevet til Console"
+            "Properties dumpet til Console"
         );
 
     }
