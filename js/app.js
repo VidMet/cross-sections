@@ -619,8 +619,8 @@ async function generateProfile() {
             positionX: frame.position.x * 1000,
             positionY: frame.position.y * 1000,
             positionZ: frame.position.z * 1000,
-            directionX: tangent.x,
-            directionY: tangent.y,
+            directionX: -tangent.x,
+            directionY: -tangent.y,
             directionZ: 0,
             controlsVisible: true
         };
