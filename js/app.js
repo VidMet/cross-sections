@@ -10,20 +10,31 @@ import {
     setStatus
 } from "./tc-api.js";
 
-const appState = {
+// =======================================================
+// PROGRAMTILSTAND
+// =======================================================
+
+const state = {
     api: null,
     modelId: null,
     runtimeIds: [],
     selectedObject: null,
-    hierarchyProperties: [],
     alignmentPoints: [],
     alignmentLength: 0,
     station: 0,
     currentFrame: null,
+
     markerId: 930170,
     markerIcon: null,
-    markerUpdateSequence: 0
+    markerSequence: 0,
+
+    sectionPlaneIds: [],
+    sectionPlane: null
 };
+
+// =======================================================
+// DOM
+// =======================================================
 
 const versionInfo = document.getElementById("versionInfo");
 const buildInfo = document.getElementById("buildInfo");
@@ -47,14 +58,25 @@ const MARKER_ICON_URL = new URL(
     import.meta.url
 ).href;
 
+// =======================================================
+// FEILHÅNDTERING OG LOGGING
+// =======================================================
 
 window.addEventListener("error", function (event) {
-    console.error("GLOBAL JAVASCRIPT-FEIL:", event.error || event.message);
+    console.error(
+        "GLOBAL JAVASCRIPT-FEIL:",
+        event.error || event.message
+    );
+
     setStatus("JavaScript-feil - se Console");
 });
 
 window.addEventListener("unhandledrejection", function (event) {
-    console.error("UHANDTERT PROMISE-FEIL:", event.reason);
+    console.error(
+        "UHÅNDTERT PROMISE-FEIL:",
+        event.reason
+    );
+
     setStatus("Promise-feil - se Console");
 });
 
@@ -62,11 +84,13 @@ function logSection(title) {
     console.log("===== " + title + " =====");
 }
 
-function makeJsonSafe(value) {
+function jsonSafe(value) {
     return JSON.stringify(
         value,
         function (key, item) {
-            return typeof item === "bigint" ? item.toString() : item;
+            return typeof item === "bigint"
+                ? item.toString()
+                : item;
         },
         2
     );
@@ -77,26 +101,21 @@ function logResult(title, value) {
     console.dir(value);
 
     try {
-        console.log(makeJsonSafe(value));
+        console.log(jsonSafe(value));
     }
     catch (error) {
-        console.warn(title + " kunne ikke konverteres til JSON:", error);
+        console.warn(
+            title + " kunne ikke serialiseres:",
+            error
+        );
     }
 }
 
-async function runTest(title, callback) {
-    try {
-        const result = await callback();
-        logResult(title, result);
-        return result;
-    }
-    catch (error) {
-        console.warn(title + " FEILET:", error);
-        return null;
-    }
-}
+// =======================================================
+// INITIALISERING
+// =======================================================
 
-function initializeVersionInfo() {
+function showVersion() {
     if (versionInfo) {
         versionInfo.innerText = "v" + VERSION;
     }
@@ -112,18 +131,18 @@ function initializeVersionInfo() {
 
 async function initialize() {
     logSection("START");
-    initializeVersionInfo();
+    showVersion();
 
     try {
-        appState.api = await connectTC();
-        console.log("Trimble API:", appState.api);
+        state.api = await connectTC();
 
-        if (!appState.api) {
+        if (!state.api) {
             setStatus("Ingen Trimble API-forbindelse");
             return;
         }
 
-        console.log("API KEYS:", Object.keys(appState.api));
+        console.log("Trimble API:", state.api);
+        console.log("API KEYS:", Object.keys(state.api));
         setStatus("Trimble API koblet");
     }
     catch (error) {
@@ -134,44 +153,9 @@ async function initialize() {
     logSection("INITIALISERING FERDIG");
 }
 
-function updateProfileUi(selectedObject, runtimeId) {
-    const objectName =
-        selectedObject &&
-        selectedObject.product &&
-        selectedObject.product.name
-            ? selectedObject.product.name
-            : "Ukjent profil";
-
-    const objectType =
-        selectedObject &&
-        selectedObject.product &&
-        selectedObject.product.objectType
-            ? selectedObject.product.objectType
-            : (
-                selectedObject && selectedObject.class
-                    ? selectedObject.class
-                    : "Ukjent objekttype"
-            );
-
-    if (profileName) {
-        profileName.value = objectName;
-    }
-
-    if (profileId) {
-        profileId.innerText = String(runtimeId);
-    }
-
-    const profileType = document.getElementById("profileType");
-
-    if (profileType) {
-        profileType.innerText = objectType;
-    }
-
-    console.log("Valgt alignment:", objectName);
-    console.log("IFC-klasse:", selectedObject.class);
-    console.log("Objekttype:", objectType);
-    console.log("RuntimeId:", runtimeId);
-}
+// =======================================================
+// ALIGNMENT OG STASJONSREFERENTER
+// =======================================================
 
 function getStationValue(object) {
     if (!object || object.class !== "IFCREFERENT") {
@@ -185,7 +169,10 @@ function getStationValue(object) {
     for (let i = 0; i < propertySets.length; i += 1) {
         const propertySet = propertySets[i];
 
-        if (!propertySet || propertySet.name !== "Pset_Stationing") {
+        if (
+            !propertySet ||
+            propertySet.name !== "Pset_Stationing"
+        ) {
             continue;
         }
 
@@ -200,29 +187,30 @@ function getStationValue(object) {
                 const rawValue = Number(property.value);
 
                 if (Number.isFinite(rawValue)) {
+                    // Novapoint leverer verdien i mm i modellen som testes.
                     return rawValue / 1000;
                 }
             }
         }
     }
 
-    const nameValue = Number(
+    const fallback = Number(
         object.product && object.product.name
             ? object.product.name
             : NaN
     );
 
-    return Number.isFinite(nameValue)
-        ? nameValue
+    return Number.isFinite(fallback)
+        ? fallback
         : null;
 }
 
-function createAlignmentPoints(hierarchyProperties) {
-    if (!Array.isArray(hierarchyProperties)) {
+function createAlignmentPoints(properties) {
+    if (!Array.isArray(properties)) {
         return [];
     }
 
-    return hierarchyProperties
+    return properties
         .filter(function (object) {
             return (
                 object &&
@@ -255,48 +243,26 @@ function createAlignmentPoints(hierarchyProperties) {
         });
 }
 
-function configureStationControls(points) {
-    if (!Array.isArray(points) || points.length < 2) {
-        appState.alignmentLength = 0;
+function normalizeVector(vector) {
+    const length = Math.sqrt(
+        vector.x * vector.x +
+        vector.y * vector.y +
+        vector.z * vector.z
+    );
 
-        if (profileLength) {
-            profileLength.innerText = "Ikke beregnet";
-        }
-
-        return;
+    if (!Number.isFinite(length) || length === 0) {
+        return { x: 0, y: 0, z: 0 };
     }
 
-    const firstStation = points[0].station;
-    const lastStation = points[points.length - 1].station;
-    const alignmentLength = lastStation - firstStation;
-
-    appState.alignmentLength = alignmentLength;
-
-    if (profileLength) {
-        profileLength.innerText = alignmentLength.toFixed(3) + " m";
-    }
-
-    if (stationSlider) {
-        stationSlider.min = String(firstStation);
-        stationSlider.max = String(lastStation);
-        stationSlider.step = "0.1";
-    }
-
-    if (stationInput) {
-        stationInput.min = String(firstStation);
-        stationInput.max = String(lastStation);
-        stationInput.step = "0.1";
-    }
-
-    updateStation(firstStation, false);
-
-    console.log("Startstasjon:", firstStation);
-    console.log("Sluttstasjon:", lastStation);
-    console.log("Alignmentlengde:", alignmentLength);
+    return {
+        x: vector.x / length,
+        y: vector.y / length,
+        z: vector.z / length
+    };
 }
 
 function findStationInterval(station) {
-    const points = appState.alignmentPoints;
+    const points = state.alignmentPoints;
 
     if (!Array.isArray(points) || points.length < 2) {
         return null;
@@ -333,28 +299,6 @@ function findStationInterval(station) {
     return null;
 }
 
-function normalizeVector(vector) {
-    const length = Math.sqrt(
-        vector.x * vector.x +
-        vector.y * vector.y +
-        vector.z * vector.z
-    );
-
-    if (!Number.isFinite(length) || length === 0) {
-        return {
-            x: 0,
-            y: 0,
-            z: 0
-        };
-    }
-
-    return {
-        x: vector.x / length,
-        y: vector.y / length,
-        z: vector.z / length
-    };
-}
-
 function evaluateStation(station) {
     const interval = findStationInterval(station);
 
@@ -366,16 +310,16 @@ function evaluateStation(station) {
     const end = interval.end;
     const deltaStation = end.station - start.station;
 
-    const ratio = deltaStation === 0
+    const rawRatio = deltaStation === 0
         ? 0
         : (station - start.station) / deltaStation;
 
-    const clampedRatio = Math.max(0, Math.min(1, ratio));
+    const ratio = Math.max(0, Math.min(1, rawRatio));
 
     const position = {
-        x: start.x + (end.x - start.x) * clampedRatio,
-        y: start.y + (end.y - start.y) * clampedRatio,
-        z: start.z + (end.z - start.z) * clampedRatio
+        x: start.x + (end.x - start.x) * ratio,
+        y: start.y + (end.y - start.y) * ratio,
+        z: start.z + (end.z - start.z) * ratio
     };
 
     const tangent = normalizeVector({
@@ -390,23 +334,63 @@ function evaluateStation(station) {
         z: 0
     });
 
-    const horizontalNormal = {
-        x: -horizontalTangent.y,
-        y: horizontalTangent.x,
-        z: 0
-    };
-
     return {
         station: station,
         position: position,
         tangent: tangent,
         horizontalTangent: horizontalTangent,
-        horizontalNormal: horizontalNormal,
+        horizontalNormal: {
+            x: -horizontalTangent.y,
+            y: horizontalTangent.x,
+            z: 0
+        },
         startReferent: start,
         endReferent: end,
-        ratio: clampedRatio
+        ratio: ratio
     };
 }
+
+function configureStationControls() {
+    const points = state.alignmentPoints;
+
+    if (!Array.isArray(points) || points.length < 2) {
+        state.alignmentLength = 0;
+
+        if (profileLength) {
+            profileLength.innerText = "Ikke beregnet";
+        }
+
+        return;
+    }
+
+    const firstStation = points[0].station;
+    const lastStation = points[points.length - 1].station;
+
+    state.alignmentLength = lastStation - firstStation;
+
+    if (profileLength) {
+        profileLength.innerText =
+            state.alignmentLength.toFixed(3) + " m";
+    }
+
+    if (stationSlider) {
+        stationSlider.min = String(firstStation);
+        stationSlider.max = String(lastStation);
+        stationSlider.step = "0.1";
+    }
+
+    if (stationInput) {
+        stationInput.min = String(firstStation);
+        stationInput.max = String(lastStation);
+        stationInput.step = "0.1";
+    }
+
+    updateStation(firstStation, false);
+}
+
+// =======================================================
+// SYNLIG STASJONSMARKØR
+// =======================================================
 
 async function removeStationMarker() {
     const api = getAPI();
@@ -415,19 +399,22 @@ async function removeStationMarker() {
         !api ||
         !api.viewer ||
         typeof api.viewer.removeIcon !== "function" ||
-        !appState.markerIcon
+        !state.markerIcon
     ) {
         return;
     }
 
     try {
-        await api.viewer.removeIcon(appState.markerIcon);
+        await api.viewer.removeIcon(state.markerIcon);
     }
     catch (error) {
-        console.warn("Kunne ikke fjerne gammel stasjonsmarkor:", error);
+        console.warn(
+            "Kunne ikke fjerne gammel stasjonsmarkør:",
+            error
+        );
     }
     finally {
-        appState.markerIcon = null;
+        state.markerIcon = null;
     }
 }
 
@@ -443,73 +430,46 @@ async function updateStationMarker(frame) {
         return;
     }
 
-    const updateSequence = appState.markerUpdateSequence + 1;
-    appState.markerUpdateSequence = updateSequence;
+    const sequence = state.markerSequence + 1;
+    state.markerSequence = sequence;
 
     const marker = {
-        id: appState.markerId,
-
+        id: state.markerId,
         position: {
             x: frame.position.x,
             y: frame.position.y,
-            z: frame.position.z + 0.5
+            z: frame.position.z + 0.2
         },
-
         iconPath: MARKER_ICON_URL,
-
         size: 30
     };
 
     try {
         if (
             typeof api.viewer.removeIcon === "function" &&
-            appState.markerIcon
+            state.markerIcon
         ) {
-            await api.viewer.removeIcon(appState.markerIcon);
+            await api.viewer.removeIcon(state.markerIcon);
         }
 
-        if (updateSequence !== appState.markerUpdateSequence) {
+        if (sequence !== state.markerSequence) {
             return;
         }
 
         await api.viewer.addIcon(marker);
 
-        if (updateSequence === appState.markerUpdateSequence) {
-            appState.markerIcon = marker;
+        if (sequence === state.markerSequence) {
+            state.markerIcon = marker;
         }
     }
     catch (error) {
-        console.error("FEIL VED OPPDATERING AV STASJONSMARKOR:", error);
-        setStatus("Markorfeil - se Console");
+        console.error(
+            "FEIL VED OPPDATERING AV STASJONSMARKØR:",
+            error
+        );
+
+        setStatus("Markørfeil - se Console");
     }
-}
-
-function scheduleStationMarkerUpdate(frame) {
-    if (!frame) {
-        return;
-    }
-
-    updateStationMarker(frame);
-}
-
-function logCurrentFrame(frame) {
-    if (!frame) {
-        return;
-    }
-
-    console.log(
-        "Stasjon " + frame.station.toFixed(3),
-        {
-            position: frame.position,
-            tangent: frame.tangent,
-            horizontalNormal: frame.horizontalNormal,
-            interval: [
-                frame.startReferent.station,
-                frame.endReferent.station
-            ],
-            ratio: frame.ratio
-        }
-    );
 }
 
 function updateStation(value, shouldLog) {
@@ -519,24 +479,23 @@ function updateStation(value, shouldLog) {
         station = 0;
     }
 
-    let minimum = 0;
-    let maximum = 0;
+    const minimum = stationSlider
+        ? Number(stationSlider.min || 0)
+        : 0;
 
-    if (stationSlider) {
-        minimum = Number(stationSlider.min || 0);
-        maximum = Number(stationSlider.max || 0);
-    }
+    const maximum = stationSlider
+        ? Number(stationSlider.max || 0)
+        : 0;
 
-    if (!Number.isFinite(minimum)) {
-        minimum = 0;
-    }
+    station = Math.max(
+        Number.isFinite(minimum) ? minimum : 0,
+        Math.min(
+            station,
+            Number.isFinite(maximum) ? maximum : 0
+        )
+    );
 
-    if (!Number.isFinite(maximum)) {
-        maximum = minimum;
-    }
-
-    station = Math.max(minimum, Math.min(station, maximum));
-    appState.station = station;
+    state.station = station;
 
     if (stationInput) {
         stationInput.value = station.toFixed(3);
@@ -550,180 +509,183 @@ function updateStation(value, shouldLog) {
         stationLabel.innerText = station.toFixed(3);
     }
 
-    appState.currentFrame = evaluateStation(station);
+    state.currentFrame = evaluateStation(station);
+    updateStationMarker(state.currentFrame);
 
-    scheduleStationMarkerUpdate(appState.currentFrame);
-
-    if (shouldLog !== false) {
-        logCurrentFrame(appState.currentFrame);
+    if (shouldLog !== false && state.currentFrame) {
+        console.log(
+            "Stasjon " + station.toFixed(3),
+            state.currentFrame
+        );
     }
-
-    return appState.currentFrame;
 }
 
 function moveStation(offset) {
-    updateStation(appState.station + offset, true);
+    updateStation(state.station + offset, true);
 }
 
-async function inspectAlignmentHierarchy(api, modelId, recursiveChildren) {
-    if (!Array.isArray(recursiveChildren)) {
-        return null;
-    }
+// =======================================================
+// SYNLIG SNITTPLAN
+// =======================================================
 
-    const hierarchyIds = recursiveChildren
-        .map(function (item) {
-            return Number(item.id);
-        })
-        .filter(function (id) {
-            return Number.isFinite(id);
-        });
+async function removeGeneratedSectionPlane() {
+    const api = getAPI();
 
-    if (hierarchyIds.length === 0) {
-        console.warn("Fant ingen RuntimeId-er i alignmenthierarkiet.");
-        return null;
-    }
-
-    console.log("Hierarki-ID-er som undersokes:", hierarchyIds);
-
-    const childProperties = await api.viewer.getObjectProperties(
-        modelId,
-        hierarchyIds
-    );
-
-    logResult(
-        "EGENSKAPER FOR HELE ALIGNMENTHIERARKIET",
-        childProperties
-    );
-
-    appState.hierarchyProperties = Array.isArray(childProperties)
-        ? childProperties
-        : [];
-
-    appState.alignmentPoints = createAlignmentPoints(
-        appState.hierarchyProperties
-    );
-
-    logResult(
-        "STASJONSREFERENTER",
-        appState.alignmentPoints
-    );
-
-    configureStationControls(appState.alignmentPoints);
-
-    return {
-        ids: hierarchyIds,
-        properties: appState.hierarchyProperties,
-        alignmentPoints: appState.alignmentPoints
-    };
-}
-
-async function testExternalObjectIds(api, modelId, runtimeIds) {
     if (
+        !api ||
         !api.viewer ||
-        typeof api.viewer.convertToObjectIds !== "function"
+        typeof api.viewer.removeSectionPlanes !== "function"
     ) {
-        return null;
+        state.sectionPlaneIds = [];
+        state.sectionPlane = null;
+        return;
     }
 
-    return runTest(
-        "EKSTERNE OBJEKT-ID-ER",
-        function () {
-            return api.viewer.convertToObjectIds(
-                modelId,
-                runtimeIds
-            );
-        }
-    );
+    if (state.sectionPlaneIds.length === 0) {
+        state.sectionPlane = null;
+        return;
+    }
+
+    try {
+        await api.viewer.removeSectionPlanes(
+            state.sectionPlaneIds
+        );
+    }
+    catch (error) {
+        console.warn(
+            "Kunne ikke fjerne tidligere snittplan:",
+            error
+        );
+    }
+    finally {
+        state.sectionPlaneIds = [];
+        state.sectionPlane = null;
+    }
 }
 
-async function testObjectPositions(api, modelId, runtimeIds) {
-    if (
-        !api.viewer ||
-        typeof api.viewer.getObjectPositions !== "function"
-    ) {
-        return null;
+async function generateProfile() {
+    if (!state.selectedObject) {
+        alert("Velg en profileringslinje først.");
+        return;
     }
 
-    return runTest(
-        "OBJEKTPOSISJONER",
-        function () {
-            return api.viewer.getObjectPositions(
-                modelId,
-                runtimeIds
-            );
-        }
-    );
-}
-
-async function testObjects(api, modelId, runtimeIds) {
-    if (
-        !api.viewer ||
-        typeof api.viewer.getObjects !== "function"
-    ) {
-        return null;
+    if (!state.currentFrame) {
+        alert("Fant ingen stasjonsramme.");
+        return;
     }
 
-    const selector = {
-        modelObjectIds: [
+    const api = getAPI();
+
+    if (
+        !api ||
+        !api.viewer ||
+        typeof api.viewer.addSectionPlane !== "function"
+    ) {
+        alert("Viewer API støtter ikke addSectionPlane.");
+        setStatus("Snittplan er ikke tilgjengelig");
+        return;
+    }
+
+    const frame = state.currentFrame;
+    const tangent = frame.horizontalTangent;
+
+    if (
+        !tangent ||
+        !Number.isFinite(tangent.x) ||
+        !Number.isFinite(tangent.y) ||
+        (
+            Math.abs(tangent.x) < 1e-9 &&
+            Math.abs(tangent.y) < 1e-9
+        )
+    ) {
+        alert("Kunne ikke beregne retning for snittplanet.");
+        setStatus("Ugyldig retning for snittplan");
+        return;
+    }
+
+    setStatus("Oppretter snittplan...");
+
+    try {
+        await removeGeneratedSectionPlane();
+
+        const requestedPlane = {
+            positionX: frame.position.x * 1000,
+            positionY: frame.position.y * 1000,
+            positionZ: frame.position.z * 1000,
+            directionX: tangent.x,
+            directionY: tangent.y,
+            directionZ: 0,
+            controlsVisible: true
+        };
+
+        const addedPlanes =
+            await api.viewer.addSectionPlane(requestedPlane);
+
+        const returnedPlanes = Array.isArray(addedPlanes)
+            ? addedPlanes
+            : [];
+
+        state.sectionPlane = returnedPlanes.length > 0
+            ? returnedPlanes[0]
+            : requestedPlane;
+
+        state.sectionPlaneIds = returnedPlanes
+            .map(function (plane) {
+                return Number(plane.id);
+            })
+            .filter(function (id) {
+                return Number.isFinite(id);
+            });
+
+        logResult(
+            "OPPRETTET SNITTPLAN",
             {
-                modelId: modelId,
-                objectRuntimeIds: runtimeIds,
-                recursive: true
+                station: frame.station,
+                frame: frame,
+                requestedPlane: requestedPlane,
+                returnedPlanes: returnedPlanes,
+                sectionPlaneIds: state.sectionPlaneIds
             }
-        ]
-    };
+        );
 
-    return runTest(
-        "GETOBJECTS",
-        function () {
-            return api.viewer.getObjects(selector);
-        }
-    );
+        setStatus(
+            "Snittplan opprettet ved stasjon " +
+            frame.station.toFixed(3)
+        );
+    }
+    catch (error) {
+        console.error(
+            "FEIL VED OPPRETTELSE AV SNITTPLAN:",
+            error
+        );
+
+        setStatus("Feil ved opprettelse av snittplan");
+
+        alert(
+            error && error.message
+                ? error.message
+                : String(error)
+        );
+    }
 }
 
-async function testHierarchyChildren(api, modelId, runtimeIds, recursive) {
-    if (
-        !api.viewer ||
-        typeof api.viewer.getHierarchyChildren !== "function"
-    ) {
-        return null;
+// =======================================================
+// VALG AV PROFILERINGSLINJE
+// =======================================================
+
+function updateProfileUi(object, runtimeId) {
+    const name =
+        object && object.product && object.product.name
+            ? object.product.name
+            : "Ukjent profil";
+
+    if (profileName) {
+        profileName.value = name;
     }
 
-    return runTest(
-        recursive
-            ? "REKURSIVE HIERARKIBARN"
-            : "DIREKTE HIERARKIBARN",
-        function () {
-            return api.viewer.getHierarchyChildren(
-                modelId,
-                runtimeIds,
-                undefined,
-                recursive
-            );
-        }
-    );
-}
-
-async function testHierarchyParents(api, modelId, runtimeIds) {
-    if (
-        !api.viewer ||
-        typeof api.viewer.getHierarchyParents !== "function"
-    ) {
-        return null;
+    if (profileId) {
+        profileId.innerText = String(runtimeId);
     }
-
-    return runTest(
-        "HIERARKIFORELDRE",
-        function () {
-            return api.viewer.getHierarchyParents(
-                modelId,
-                runtimeIds,
-                undefined,
-                true,
-                false
-            );
-        }
-    );
 }
 
 async function selectProfile() {
@@ -731,7 +693,6 @@ async function selectProfile() {
         const api = getAPI();
 
         if (!api || !api.viewer) {
-            setStatus("Viewer API er ikke tilgjengelig");
             alert("Viewer API er ikke tilgjengelig.");
             return;
         }
@@ -739,6 +700,7 @@ async function selectProfile() {
         setStatus("Leser valgt objekt...");
 
         await removeStationMarker();
+        await removeGeneratedSectionPlane();
 
         const selection = await api.viewer.getSelection();
         logResult("SELECTION", selection);
@@ -750,97 +712,120 @@ async function selectProfile() {
         }
 
         if (selection.length > 1) {
-            alert("Velg bare en profileringslinje.");
+            alert("Velg bare én profileringslinje.");
             setStatus("Flere objekter valgt");
             return;
         }
 
         const modelId = selection[0].modelId;
-        const runtimeIds = selection[0].objectRuntimeIds || [];
+        const runtimeIds =
+            selection[0].objectRuntimeIds || [];
 
         if (!modelId || runtimeIds.length === 0) {
             throw new Error(
-                "Seleksjonen inneholder ikke modelId og objectRuntimeIds."
+                "Seleksjonen mangler modelId eller objectRuntimeIds."
             );
         }
 
-        appState.modelId = modelId;
-        appState.runtimeIds = runtimeIds.slice();
+        const selectedProperties =
+            await api.viewer.getObjectProperties(
+                modelId,
+                runtimeIds
+            );
 
-        const properties = await api.viewer.getObjectProperties(
-            modelId,
-            runtimeIds
-        );
+        logResult("OBJECT PROPERTIES", selectedProperties);
 
-        logResult("OBJECT PROPERTIES", properties);
+        if (
+            !selectedProperties ||
+            selectedProperties.length === 0
+        ) {
+            throw new Error(
+                "Fant ingen egenskaper for valgt objekt."
+            );
+        }
 
-        if (!properties || properties.length === 0) {
-            alert("Fant ingen egenskaper for objektet.");
-            setStatus("Ingen objektegenskaper");
+        const selectedObject = selectedProperties[0];
+        const ifcClass = String(
+            selectedObject.class || ""
+        ).toUpperCase();
+
+        if (ifcClass !== "IFCALIGNMENT") {
+            alert("Valgt objekt er ikke IFCALIGNMENT.");
+            setStatus("Valgt objekt er " + ifcClass);
             return;
         }
 
-        const selectedObject = properties[0];
-        appState.selectedObject = selectedObject;
+        state.modelId = modelId;
+        state.runtimeIds = runtimeIds.slice();
+        state.selectedObject = selectedObject;
 
         updateProfileUi(selectedObject, runtimeIds[0]);
 
-        const ifcClass = String(selectedObject.class || "").toUpperCase();
+        const recursiveChildren =
+            await api.viewer.getHierarchyChildren(
+                modelId,
+                runtimeIds,
+                undefined,
+                true
+            );
 
-        if (ifcClass !== "IFCALIGNMENT") {
-            setStatus("Valgt objekt er " + ifcClass);
-            alert("Valgt objekt er ikke IFCALIGNMENT.");
-            return;
-        }
-
-        setStatus("IfcAlignment valgt - leser stasjonsreferenter");
-
-        await testExternalObjectIds(api, modelId, runtimeIds);
-        await testObjectPositions(api, modelId, runtimeIds);
-        await testObjects(api, modelId, runtimeIds);
-
-        await testHierarchyChildren(
-            api,
-            modelId,
-            runtimeIds,
-            false
-        );
-
-        const recursiveChildren = await testHierarchyChildren(
-            api,
-            modelId,
-            runtimeIds,
-            true
-        );
-
-        await testHierarchyParents(api, modelId, runtimeIds);
-
-        const inspection = await inspectAlignmentHierarchy(
-            api,
-            modelId,
+        logResult(
+            "REKURSIVE HIERARKIBARN",
             recursiveChildren
         );
 
-        if (
-            inspection &&
-            inspection.alignmentPoints &&
-            inspection.alignmentPoints.length >= 2
-        ) {
-            setStatus(
-                "Profil valgt - " +
-                inspection.alignmentPoints.length +
-                " stasjonsreferenter, lengde " +
-                appState.alignmentLength.toFixed(3) +
-                " m"
-            );
-        }
-        else {
-            setStatus(
-                "Profil valgt - fant ikke nok stasjonsreferenter"
+        const hierarchyIds = Array.isArray(recursiveChildren)
+            ? recursiveChildren
+                .map(function (item) {
+                    return Number(item.id);
+                })
+                .filter(function (id) {
+                    return Number.isFinite(id);
+                })
+            : [];
+
+        if (hierarchyIds.length === 0) {
+            throw new Error(
+                "Fant ingen objekter i alignmenthierarkiet."
             );
         }
 
-        logSection("PROFILTEST FERDIG");
+        const hierarchyProperties =
+            await api.viewer.getObjectProperties(
+                modelId,
+                hierarchyIds
+            );
+
+        logResult(
+            "EGENSKAPER FOR ALIGNMENTHIERARKIET",
+            hierarchyProperties
+        );
+
+        state.alignmentPoints = createAlignmentPoints(
+            hierarchyProperties
+        );
+
+        logResult(
+            "STASJONSREFERENTER",
+            state.alignmentPoints
+        );
+
+        configureStationControls();
+
+        if (state.alignmentPoints.length < 2) {
+            setStatus(
+                "Profil valgt - fant ikke nok stasjonsreferenter"
+            );
+            return;
+        }
+
+        setStatus(
+            "Profil valgt - " +
+            state.alignmentPoints.length +
+            " stasjonsreferenter, lengde " +
+            state.alignmentLength.toFixed(3) +
+            " m"
+        );
     }
     catch (error) {
         console.error("FEIL VED PROFILVALG:", error);
@@ -854,88 +839,109 @@ async function selectProfile() {
     }
 }
 
-function generateProfile() {
-    if (!appState.selectedObject) {
-        alert("Velg en profileringslinje forst.");
-        return;
-    }
-
-    if (!appState.currentFrame) {
-        alert("Fant ingen stasjonsramme.");
-        return;
-    }
-
-    logResult(
-        "AKTIV STASJONSRAMME",
-        appState.currentFrame
-    );
-
-    setStatus(
-        "Stasjon " +
-        appState.currentFrame.station.toFixed(3) +
-        " beregnet - tverrprofilmotor er neste steg"
-    );
-}
+// =======================================================
+// EKSPORT, FORELØPIG IKKE IMPLEMENTERT
+// =======================================================
 
 function exportSvg() {
-    setStatus("SVG-eksport er ikke implementert enna");
+    setStatus("SVG-eksport er ikke implementert ennå");
 }
 
 function exportPng() {
-    setStatus("PNG-eksport er ikke implementert enna");
+    setStatus("PNG-eksport er ikke implementert ennå");
 }
+
+// =======================================================
+// HENDELSER
+// =======================================================
 
 function bindEvents() {
     if (btnSelectProfile) {
-        btnSelectProfile.addEventListener("click", selectProfile);
+        btnSelectProfile.addEventListener(
+            "click",
+            selectProfile
+        );
     }
 
     if (btnGenerate) {
-        btnGenerate.addEventListener("click", generateProfile);
+        btnGenerate.addEventListener(
+            "click",
+            generateProfile
+        );
     }
 
     if (btnExportSvg) {
-        btnExportSvg.addEventListener("click", exportSvg);
+        btnExportSvg.addEventListener(
+            "click",
+            exportSvg
+        );
     }
 
     if (btnExportPng) {
-        btnExportPng.addEventListener("click", exportPng);
+        btnExportPng.addEventListener(
+            "click",
+            exportPng
+        );
     }
 
     if (btnMinus10) {
-        btnMinus10.addEventListener("click", function () {
-            moveStation(-10);
-        });
+        btnMinus10.addEventListener(
+            "click",
+            function () {
+                moveStation(-10);
+            }
+        );
     }
 
     if (btnMinus1) {
-        btnMinus1.addEventListener("click", function () {
-            moveStation(-1);
-        });
+        btnMinus1.addEventListener(
+            "click",
+            function () {
+                moveStation(-1);
+            }
+        );
     }
 
     if (btnPlus1) {
-        btnPlus1.addEventListener("click", function () {
-            moveStation(1);
-        });
+        btnPlus1.addEventListener(
+            "click",
+            function () {
+                moveStation(1);
+            }
+        );
     }
 
     if (btnPlus10) {
-        btnPlus10.addEventListener("click", function () {
-            moveStation(10);
-        });
+        btnPlus10.addEventListener(
+            "click",
+            function () {
+                moveStation(10);
+            }
+        );
     }
 
     if (stationSlider) {
-        stationSlider.addEventListener("input", function (event) {
-            updateStation(event.target.value, true);
-        });
+        stationSlider.addEventListener(
+            "input",
+            function (event) {
+                updateStation(
+                    event.target.value,
+                    true
+                );
+            }
+        );
     }
 
     if (stationInput) {
-        stationInput.addEventListener("change", function (event) {
-            updateStation(event.target.value, true);
-        });
+        stationInput.addEventListener(
+            "change",
+            function (event) {
+                updateStation(
+                    event.target.value,
+                    true
+                );
+            }
+        );
     }
 
     console.log("Events registrert");
@@ -943,8 +949,9 @@ function bindEvents() {
 
 window.addEventListener("beforeunload", function () {
     removeStationMarker();
+    removeGeneratedSectionPlane();
 });
 
-initializeVersionInfo();
+showVersion();
 bindEvents();
 initialize();
