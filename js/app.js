@@ -770,6 +770,77 @@ function summarizeHierarchy(
 }
 
 
+async function inspectAlignmentHierarchy(
+    api,
+    modelId,
+    recursiveChildren
+) {
+    const hierarchyIds = recursiveChildren
+        .map(item => Number(item.id))
+        .filter(id => Number.isFinite(id));
+
+    if (hierarchyIds.length === 0) {
+        console.warn(
+            "Fant ingen RuntimeId-er i alignmenthierarkiet."
+        );
+
+        return null;
+    }
+
+    console.log(
+        "Hierarki-ID-er som undersøkes:",
+        hierarchyIds
+    );
+
+    const childProperties =
+        await api.viewer.getObjectProperties(
+            modelId,
+            hierarchyIds
+        );
+
+    logResult(
+        "EGENSKAPER FOR HELE ALIGNMENTHIERARKIET",
+        childProperties
+    );
+
+    const childPositions =
+        await api.viewer.getObjectPositions(
+            modelId,
+            hierarchyIds
+        );
+
+    logResult(
+        "POSISJONER FOR HELE ALIGNMENTHIERARKIET",
+        childPositions
+    );
+
+    const summary =
+        childProperties.map(object => ({
+            id: object.id,
+            class: object.class || "",
+            name:
+                object.product?.name || "",
+            objectType:
+                object.product?.objectType || "",
+            position:
+                object.position || null,
+            propertySetCount:
+                Array.isArray(object.properties)
+                    ? object.properties.length
+                    : 0
+        }));
+
+    console.table(summary);
+
+    return {
+        ids: hierarchyIds,
+        properties: childProperties,
+        positions: childPositions,
+        summary: summary
+    };
+}
+
+
 // =======================================================
 // VELG PROFILERINGSLINJE
 // =======================================================
@@ -976,6 +1047,13 @@ async function selectProfile() {
                 api,
                 modelId,
                 runtimeIds
+            );
+
+        const hierarchyInspection =
+            await inspectAlignmentHierarchy(
+                api,
+                modelId,
+                recursiveChildren
             );
 
         const parents =
