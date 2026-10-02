@@ -10,6 +10,11 @@ import {
     setStatus
 } from "./tc-api.js";
 
+import {
+    clearProfileSvg,
+    renderProfileShell
+} from "./svg-renderer.js";
+
 // =======================================================
 // PROGRAMTILSTAND
 // =======================================================
@@ -52,6 +57,8 @@ const btnMinus10 = document.getElementById("minus10");
 const btnMinus1 = document.getElementById("minus1");
 const btnPlus1 = document.getElementById("plus1");
 const btnPlus10 = document.getElementById("plus10");
+const profileSvg = document.getElementById("profileSvg");
+const sectionWidthInput = document.getElementById("sectionWidth");
 
 const MARKER_ICON_URL = new URL(
     "../assets/station-marker.png",
@@ -612,8 +619,8 @@ async function generateProfile() {
             positionX: frame.position.x * 1000,
             positionY: frame.position.y * 1000,
             positionZ: frame.position.z * 1000,
-            directionX: -tangent.x,
-            directionY: -tangent.y,
+            directionX: tangent.x,
+            directionY: tangent.y,
             directionZ: 0,
             controlsVisible: true
         };
@@ -648,8 +655,37 @@ async function generateProfile() {
             }
         );
 
+        const sectionWidth = sectionWidthInput
+            ? Number(sectionWidthInput.value)
+            : 50;
+
+        const svgShell = renderProfileShell(
+            profileSvg,
+            {
+                station: frame.station,
+                alignmentName:
+                    state.selectedObject &&
+                    state.selectedObject.product
+                        ? state.selectedObject.product.name
+                        : "Profileringslinje",
+                centerElevation: frame.position.z,
+                sectionWidth:
+                    Number.isFinite(sectionWidth) &&
+                    sectionWidth > 0
+                        ? sectionWidth
+                        : 50,
+                verticalBelow: 8,
+                verticalAbove: 12
+            }
+        );
+
+        logResult(
+            "SVG-SKALL",
+            svgShell
+        );
+
         setStatus(
-            "Snittplan opprettet ved stasjon " +
+            "Snittplan og SVG-skall opprettet ved stasjon " +
             frame.station.toFixed(3)
         );
     }
@@ -701,6 +737,7 @@ async function selectProfile() {
 
         await removeStationMarker();
         await removeGeneratedSectionPlane();
+        clearProfileSvg(profileSvg);
 
         const selection = await api.viewer.getSelection();
         logResult("SELECTION", selection);

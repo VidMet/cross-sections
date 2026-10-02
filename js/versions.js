@@ -1,8 +1,8 @@
 export const APP_NAME =
-"Interaktiv tverrprofilviser";
+    "Interaktiv tverrprofilviser";
 
 export const VERSION =
-"0.4.01";
+    "0.4.02";
 
 export const BUILD_DATE =
-"2026-10-01 23:30";
+    "2026-10-02 23:45";
