@@ -1,4 +1,8 @@
-import { transformPoint } from "./mesh-normalizer.js";
+import {
+    transformPoint,
+    calculateMeshBounds,
+    translationMatrix
+} from "./mesh-normalizer.js";
 
 const EPSILON = 1e-7;
 
@@ -29,7 +33,6 @@ function triangleIntersection(a, b, c, plane) {
         const next = (edge + 1) % 3;
         const d1 = distances[edge];
         const d2 = distances[next];
-
         if (Math.abs(d1) <= EPSILON) intersections.push(points[edge]);
         if ((d1 < -EPSILON && d2 > EPSILON) || (d1 > EPSILON && d2 < -EPSILON)) {
             intersections.push(interpolate(points[edge], points[next], d1, d2));
@@ -44,7 +47,6 @@ function triangleIntersection(a, b, c, plane) {
             Math.abs(existing.z - point.z) < EPSILON
         )) unique.push(point);
     }
-
     return unique.length >= 2 ? [unique[0], unique[1]] : null;
 }
 
@@ -57,12 +59,13 @@ function toProfilePoint(point, frame) {
     };
 }
 
-export function intersectMeshes(meshes, frame, options = {}) {
+function intersectWithTransform(meshes, frame, options, worldTransform) {
     const halfWidth = (options.sectionWidth || 50) / 2;
     const minimumLength = options.minimumSegmentLength || 0.001;
     const plane = { origin: frame.position, normal: frame.horizontalTangent };
     const segments = [];
     let trianglesTested = 0;
+    let minimumAbsolutePlaneDistance = Infinity;
 
     for (const mesh of meshes) {
         const { positions, indices, transform } = mesh;
@@ -70,28 +73,37 @@ export function intersectMeshes(meshes, frame, options = {}) {
 
         for (let index = 0; index + 2 < indices.length; index += 3) {
             trianglesTested += 1;
-            const ia = indices[index] * 3;
-            const ib = indices[index + 1] * 3;
-            const ic = indices[index + 2] * 3;
-            const a = transformPoint(transform, positions[ia], positions[ia + 1], positions[ia + 2]);
-            const b = transformPoint(transform, positions[ib], positions[ib + 1], positions[ib + 2]);
-            const c = transformPoint(transform, positions[ic], positions[ic + 1], positions[ic + 2]);
-            const hit = triangleIntersection(a, b, c, plane);
-            if (!hit) continue;
+            const offsets = [indices[index], indices[index + 1], indices[index + 2]].map(value => value * 3);
+            const points = offsets.map(offset => {
+                let point = transformPoint(
+                    transform,
+                    positions[offset],
+                    positions[offset + 1],
+                    positions[offset + 2]
+                );
+                if (worldTransform) {
+                    point = transformPoint(worldTransform, point.x, point.y, point.z);
+                }
+                return point;
+            });
 
+            for (const point of points) {
+                minimumAbsolutePlaneDistance = Math.min(
+                    minimumAbsolutePlaneDistance,
+                    Math.abs(distanceToPlane(point, plane))
+                );
+            }
+
+            const hit = triangleIntersection(points[0], points[1], points[2], plane);
+            if (!hit) continue;
             const start = toProfilePoint(hit[0], frame);
             const end = toProfilePoint(hit[1], frame);
-            if (
-                Math.abs(start.offset) > halfWidth &&
-                Math.abs(end.offset) > halfWidth
-            ) continue;
-
+            if (Math.abs(start.offset) > halfWidth && Math.abs(end.offset) > halfWidth) continue;
             const length = Math.hypot(
                 end.offset - start.offset,
                 end.elevation - start.elevation
             );
             if (length < minimumLength) continue;
-
             segments.push({
                 sourceId: mesh.sourceId,
                 entityId: mesh.entityId,
@@ -111,6 +123,60 @@ export function intersectMeshes(meshes, frame, options = {}) {
         meshesProcessed: meshes.length,
         objectsDrawn: new Set(segments.map(segment =>
             `${segment.sourceId}:${segment.entityId}`
-        )).size
+        )).size,
+        minimumAbsolutePlaneDistance:
+            Number.isFinite(minimumAbsolutePlaneDistance)
+                ? minimumAbsolutePlaneDistance
+                : null
+    };
+}
+
+export function intersectMeshes(meshes, frame, options = {}) {
+    const ifcBoundsBefore = calculateMeshBounds(meshes);
+    let result = intersectWithTransform(meshes, frame, options, null);
+    let correctionMode = "none";
+    let appliedTranslation = { x: 0, y: 0, z: 0 };
+    let worldTransform = null;
+
+    if (!result.segments.length && ifcBoundsBefore) {
+        appliedTranslation = {
+            x: frame.position.x - ifcBoundsBefore.center.x,
+            y: frame.position.y - ifcBoundsBefore.center.y,
+            z: frame.position.z - ifcBoundsBefore.center.z
+        };
+        worldTransform = translationMatrix(appliedTranslation);
+        const corrected = intersectWithTransform(
+            meshes,
+            frame,
+            options,
+            worldTransform
+        );
+        if (corrected.segments.length) {
+            result = corrected;
+            correctionMode = "mesh-center-to-section-origin";
+        }
+    }
+
+    const ifcBoundsAfter = calculateMeshBounds(meshes, worldTransform);
+    const diagnostic = {
+        sectionOrigin: { ...frame.position },
+        sectionNormal: { ...frame.horizontalTangent },
+        ifcBoundsBefore,
+        ifcBoundsAfter,
+        appliedTranslation,
+        correctionMode,
+        minimumAbsolutePlaneDistance: result.minimumAbsolutePlaneDistance,
+        meshesProcessed: result.meshesProcessed,
+        trianglesTested: result.trianglesTested,
+        segmentCount: result.segments.length,
+        objectsDrawn: result.objectsDrawn
+    };
+
+    console.log("===== IFC-KOORDINATDIAGNOSE =====");
+    console.dir(diagnostic);
+
+    return {
+        ...result,
+        coordinateDiagnostic: diagnostic
     };
 }

@@ -56,6 +56,24 @@ export class IfcGeometryProvider extends GeometryProvider {
             });
 
             const schema = this.ifcApi.GetModelSchema(this.ifcModelId);
+            let coordinationMatrix = null;
+            let worldTransformMatrix = null;
+            try {
+                coordinationMatrix = Array.from(
+                    this.ifcApi.GetCoordinationMatrix(this.ifcModelId) || []
+                );
+            }
+            catch (error) {
+                console.warn("GetCoordinationMatrix feilet:", error);
+            }
+            try {
+                worldTransformMatrix = Array.from(
+                    this.ifcApi.GetWorldTransformMatrix(this.ifcModelId) || []
+                );
+            }
+            catch (error) {
+                console.warn("GetWorldTransformMatrix feilet:", error);
+            }
             let meshCount = 0;
 
             this.ifcApi.StreamAllMeshes(this.ifcModelId, flatMesh => {
@@ -120,8 +138,18 @@ export class IfcGeometryProvider extends GeometryProvider {
                 schema,
                 entityCount: this.entities.length,
                 meshCount,
-                webIfcVersion: WEB_IFC_VERSION
+                webIfcVersion: WEB_IFC_VERSION,
+                coordinationMatrix,
+                worldTransformMatrix
             };
+            console.log("===== IFC-KOORDINATMATRISER =====");
+            console.dir({
+                sourceId: this.id,
+                fileName: this.file?.name || "",
+                schema,
+                coordinationMatrix,
+                worldTransformMatrix
+            });
             this.status = "ready";
         }
         catch (error) {
