@@ -1,74 +1,11 @@
 let API = null;
-
 export async function connectTC() {
-
-    try {
-
-        console.log(
-            "Starter Trimble Connect API"
-        );
-
-        if (
-            typeof TrimbleConnectWorkspace ===
-            "undefined"
-        ) {
-
-            console.error(
-                "TrimbleConnectWorkspace ikke funnet"
-            );
-
-            return null;
-        }
-
-        API =
-            await TrimbleConnectWorkspace.connect(
-                window.parent,
-                function (event) {
-
-					console.group(
-					    "TC EVENT"
-					);
-
-					console.dir(event);
-
-					console.groupEnd();
-
-                }
-            );
-
-        console.log(
-            "Trimble API:",
-            API
-        );
-
-        return API;
-    }
-    catch (err) {
-
-        console.error(
-            "connectTC FEIL:",
-            err
-        );
-
-        return null;
-    }
-}
-
-export function getAPI() {
-
+    if (API) return API;
+    if (!window.TrimbleConnectWorkspace) throw new Error("Trimble Connect Workspace API er ikke lastet.");
+    API = await window.TrimbleConnectWorkspace.connect(window.parent, (event, data) => {
+        window.dispatchEvent(new CustomEvent("tc-workspace-event", { detail: { event, data } }));
+    });
     return API;
 }
-
-export function setStatus(text) {
-
-    const element =
-        document.getElementById(
-            "status"
-        );
-
-    if (element) {
-
-        element.innerText =
-            text;
-    }
-}
+export function getAPI() { return API; }
+export function setStatus(text) { const element = document.getElementById("status"); if (element) element.textContent = text; }

@@ -1,48 +1,25 @@
 export class GeometryProvider {
-    constructor(file, sourceIndex) {
+    constructor({ id, type, name, origin = "local", file = null, modelId = null, modelSpec = null }) {
+        this.id = id;
+        this.type = type;
+        this.name = name;
+        this.origin = origin;
         this.file = file;
-        this.sourceIndex = sourceIndex;
-        this.id = `source-${sourceIndex}-${crypto.randomUUID()}`;
-        this.type = "unknown";
-        this.status = "new";
-        this.metadata = {};
+        this.modelId = modelId;
+        this.modelSpec = modelSpec;
+        this.status = file ? "new" : "discovered";
         this.entities = [];
         this.meshes = [];
+        this.metadata = {};
         this.warnings = [];
         this.error = null;
     }
-
-    async open() {
-        throw new Error("open() må implementeres av formatadapteren.");
-    }
-
-    async getEntityIndex() {
-        return this.entities;
-    }
-
-    async getMeshesForEntityIds() {
-        return [];
-    }
-
+    async open() { throw new Error("open() må implementeres i formatadapteren."); }
+    attachFile(file) { this.file = file; this.status = "new"; }
     getSummary() {
-        return {
-            id: this.id,
-            sourceIndex: this.sourceIndex,
-            type: this.type,
-            fileName: this.file.name,
-            fileSize: this.file.size,
-            status: this.status,
-            entityCount: this.entities.length,
-            meshCount: this.meshes.length,
-            metadata: this.metadata,
-            warnings: this.warnings,
-            error: this.error
-        };
+        return { id:this.id, type:this.type, name:this.name, origin:this.origin, modelId:this.modelId,
+            status:this.status, fileSize:this.file?.size || 0, entityCount:this.entities.length,
+            meshCount:this.meshes.length, metadata:this.metadata, warnings:this.warnings, error:this.error };
     }
-
-    close() {
-        this.entities = [];
-        this.meshes = [];
-        this.status = "closed";
-    }
+    close() { this.entities=[]; this.meshes=[]; this.file=null; this.status="closed"; }
 }
