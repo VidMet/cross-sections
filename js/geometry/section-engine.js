@@ -240,6 +240,134 @@ function evaluateMapping(meshes, frame, options, mapping, bounds) {
     };
 }
 
+
+function diagnoseProfileType(result, sectionWidth) {
+    const segments = result.segments || [];
+    const width = Math.max(1, Number(sectionWidth) || 50);
+
+    if (!segments.length) {
+        return {
+            classification: "ingen-geometri",
+            confidence: 1,
+            reason: "Ingen skjæringssegmenter å klassifisere.",
+            metrics: {}
+        };
+    }
+
+    let totalLength = 0;
+    let longestSegment = 0;
+    let nearHorizontalLength = 0;
+    let nearVerticalLength = 0;
+    let positiveOffsetPoints = 0;
+    let negativeOffsetPoints = 0;
+    const offsets = [];
+    const elevations = [];
+    const objectKeys = new Set();
+
+    for (const segment of segments) {
+        const dx = segment.end.offset - segment.start.offset;
+        const dz = segment.end.elevation - segment.start.elevation;
+        const length = Math.hypot(dx, dz);
+        const absoluteAngle = Math.atan2(Math.abs(dz), Math.abs(dx || EPSILON)) * 180 / Math.PI;
+
+        totalLength += length;
+        longestSegment = Math.max(longestSegment, length);
+        if (absoluteAngle <= 15) nearHorizontalLength += length;
+        if (absoluteAngle >= 75) nearVerticalLength += length;
+
+        for (const point of [segment.start, segment.end]) {
+            offsets.push(point.offset);
+            elevations.push(point.elevation);
+            if (point.offset > 0.25) positiveOffsetPoints += 1;
+            if (point.offset < -0.25) negativeOffsetPoints += 1;
+        }
+
+        objectKeys.add(`${segment.sourceId}:${segment.entityId}`);
+    }
+
+    const horizontalSpan = Math.max(...offsets) - Math.min(...offsets);
+    const verticalSpan = Math.max(...elevations) - Math.min(...elevations);
+    const widthOccupancy = horizontalSpan / width;
+    const horizontalRatio = totalLength ? nearHorizontalLength / totalLength : 0;
+    const verticalRatio = totalLength ? nearVerticalLength / totalLength : 0;
+    const longestRatio = totalLength ? longestSegment / totalLength : 0;
+    const bilateral = positiveOffsetPoints > 0 && negativeOffsetPoints > 0;
+
+    let crossScore = 0;
+    let longitudinalScore = 0;
+    const indicators = [];
+
+    if (bilateral) {
+        crossScore += 2;
+        indicators.push("Geometri finnes på begge sider av referanselinjen.");
+    } else {
+        longitudinalScore += 1;
+        indicators.push("Geometrien ligger hovedsakelig på én side av referanselinjen.");
+    }
+
+    if (objectKeys.size >= 3) {
+        crossScore += 2;
+        indicators.push("Flere IFC-objekter bidrar til snittet.");
+    } else {
+        longitudinalScore += 1;
+        indicators.push("Få IFC-objekter bidrar til snittet.");
+    }
+
+    if (widthOccupancy >= 0.15 && widthOccupancy <= 0.80) {
+        crossScore += 2;
+        indicators.push("Horisontal utstrekning er moderat i forhold til valgt snittbredde.");
+    }
+    if (widthOccupancy > 0.90) {
+        longitudinalScore += 3;
+        indicators.push("Geometrien fyller nesten hele valgt snittbredde.");
+    }
+
+    if (horizontalRatio > 0.75 && verticalSpan < Math.max(2, horizontalSpan * 0.20)) {
+        longitudinalScore += 3;
+        indicators.push("Resultatet domineres av en lang, slak linjeføring.");
+    }
+
+    if (verticalRatio > 0.35) {
+        crossScore += 1;
+        indicators.push("Resultatet inneholder tydelige vertikale eller bratte objektkanter.");
+    }
+
+    if (longestRatio > 0.45) {
+        longitudinalScore += 2;
+        indicators.push("Én sammenhengende linje dominerer total segmentlengde.");
+    }
+
+    if (verticalSpan > 0.25 && horizontalSpan > verticalSpan * 2) {
+        crossScore += 1;
+    }
+
+    const difference = crossScore - longitudinalScore;
+    let classification = "uavklart";
+    if (difference >= 3) classification = "sannsynlig-tverrprofil";
+    if (difference <= -3) classification = "sannsynlig-lengdeprofil";
+
+    const confidence = Math.min(1, Math.abs(difference) / Math.max(5, crossScore + longitudinalScore));
+
+    return {
+        classification,
+        confidence,
+        crossScore,
+        longitudinalScore,
+        indicators,
+        metrics: {
+            segmentCount: segments.length,
+            objectCount: objectKeys.size,
+            horizontalSpan,
+            verticalSpan,
+            widthOccupancy,
+            horizontalLengthRatio: horizontalRatio,
+            verticalLengthRatio: verticalRatio,
+            longestSegmentRatio: longestRatio,
+            bilateral
+        }
+    };
+}
+
 export function intersectMeshes(meshes, frame, options = {}) {
     const bounds = collectWorldBounds(meshes);
     if (!bounds) {
@@ -291,8 +419,15 @@ export function intersectMeshes(meshes, frame, options = {}) {
         candidates: diagnosticCandidates
     };
 
+    const profileTypeDiagnostic = diagnoseProfileType(
+        selected,
+        options.sectionWidth || 50
+    );
+
     console.log("===== IFC-AKSE- OG MATRISEDIAGNOSE =====");
     console.dir(axisDiagnostic);
+    console.log("===== TVERRPROFIL ELLER LENGDEPROFIL =====");
+    console.dir(profileTypeDiagnostic);
 
     return {
         segments: selected.segments,
@@ -301,6 +436,7 @@ export function intersectMeshes(meshes, frame, options = {}) {
         objectsDrawn: selected.objectsDrawn,
         minimumAbsolutePlaneDistance: selected.minimumAbsolutePlaneDistance,
         selectedAxisMapping: selected.mapping,
-        axisDiagnostic
+        axisDiagnostic,
+        profileTypeDiagnostic
     };
 }
