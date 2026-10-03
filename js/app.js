@@ -1,24 +1,10 @@
-import {
-    VERSION,
-    BUILD_DATE,
-    APP_NAME
-} from "./versions.js";
-
-import {
-    connectTC,
-    getAPI,
-    setStatus
-} from "./tc-api.js";
-
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js";
+import { connectTC, getAPI, setStatus } from "./tc-api.js";
 import {
     clearProfileSvg,
     renderProfileShell,
     renderGeometryDiagnostic
 } from "./svg-renderer.js";
-
-// =======================================================
-// PROGRAMTILSTAND
-// =======================================================
 
 const state = {
     api: null,
@@ -29,326 +15,144 @@ const state = {
     alignmentLength: 0,
     station: 0,
     currentFrame: null,
-
     markerId: 930170,
     markerIcon: null,
     markerSequence: 0,
-
     sectionPlaneIds: [],
-    sectionPlane: null,
-
     geometryDiagnostic: null
 };
 
-// =======================================================
-// DOM
-// =======================================================
+const $ = id => document.getElementById(id);
+const versionInfo = $("versionInfo");
+const buildInfo = $("buildInfo");
+const profileName = $("profileName");
+const profileId = $("profileId");
+const profileLength = $("profileLength");
+const stationInput = $("stationInput");
+const stationSlider = $("stationSlider");
+const stationLabel = $("stationLabel");
+const sectionWidthInput = $("sectionWidth");
+const profileSvg = $("profileSvg");
+const MARKER_ICON_URL = new URL("../assets/station-marker.png", import.meta.url).href;
 
-const versionInfo = document.getElementById("versionInfo");
-const buildInfo = document.getElementById("buildInfo");
-const profileName = document.getElementById("profileName");
-const profileId = document.getElementById("profileId");
-const profileLength = document.getElementById("profileLength");
-const stationInput = document.getElementById("stationInput");
-const stationSlider = document.getElementById("stationSlider");
-const stationLabel = document.getElementById("stationLabel");
-const btnSelectProfile = document.getElementById("btnSelectProfile");
-const btnGenerate = document.getElementById("btnGenerate");
-const btnExportSvg = document.getElementById("btnExportSvg");
-const btnExportPng = document.getElementById("btnExportPng");
-const btnMinus10 = document.getElementById("minus10");
-const btnMinus1 = document.getElementById("minus1");
-const btnPlus1 = document.getElementById("plus1");
-const btnPlus10 = document.getElementById("plus10");
-const profileSvg = document.getElementById("profileSvg");
-const sectionWidthInput = document.getElementById("sectionWidth");
-
-const MARKER_ICON_URL = new URL(
-    "../assets/station-marker.png",
-    import.meta.url
-).href;
-
-// =======================================================
-// FEILHÅNDTERING OG LOGGING
-// =======================================================
-
-window.addEventListener("error", function (event) {
-    console.error(
-        "GLOBAL JAVASCRIPT-FEIL:",
-        event.error || event.message
-    );
-
+window.addEventListener("error", event => {
+    console.error("GLOBAL JAVASCRIPT-FEIL:", event.error || event.message);
     setStatus("JavaScript-feil - se Console");
 });
 
-window.addEventListener("unhandledrejection", function (event) {
-    console.error(
-        "UHÅNDTERT PROMISE-FEIL:",
-        event.reason
-    );
-
+window.addEventListener("unhandledrejection", event => {
+    console.error("UHÅNDTERT PROMISE-FEIL:", event.reason);
     setStatus("Promise-feil - se Console");
 });
 
-function logSection(title) {
-    console.log("===== " + title + " =====");
-}
-
-function jsonSafe(value) {
-    return JSON.stringify(
-        value,
-        function (key, item) {
-            return typeof item === "bigint"
-                ? item.toString()
-                : item;
-        },
-        2
-    );
-}
-
 function logResult(title, value) {
-    logSection(title);
+    console.log("===== " + title + " =====");
     console.dir(value);
-
     try {
-        console.log(jsonSafe(value));
-    }
-    catch (error) {
-        console.warn(
-            title + " kunne ikke serialiseres:",
-            error
-        );
+        console.log(JSON.stringify(value, (key, item) =>
+            typeof item === "bigint" ? item.toString() : item, 2));
+    } catch (error) {
+        console.warn("Kunne ikke serialisere " + title + ":", error);
     }
 }
-
-// =======================================================
-// INITIALISERING
-// =======================================================
 
 function showVersion() {
-    if (versionInfo) {
-        versionInfo.innerText = "v" + VERSION;
-    }
-
-    if (buildInfo) {
-        buildInfo.innerText = BUILD_DATE;
-    }
-
+    if (versionInfo) versionInfo.innerText = "v" + VERSION;
+    if (buildInfo) buildInfo.innerText = BUILD_DATE;
     console.log("APP:", APP_NAME);
     console.log("VERSION:", VERSION);
     console.log("BUILD:", BUILD_DATE);
 }
 
 async function initialize() {
-    logSection("START");
+    console.log("===== START =====");
     showVersion();
-
     try {
         state.api = await connectTC();
-
-        if (!state.api) {
-            setStatus("Ingen Trimble API-forbindelse");
-            return;
-        }
-
+        if (!state.api) throw new Error("Ingen API mottatt");
         console.log("Trimble API:", state.api);
         console.log("API KEYS:", Object.keys(state.api));
         setStatus("Trimble API koblet");
-    }
-    catch (error) {
+    } catch (error) {
         console.error("INITIALISERINGSFEIL:", error);
         setStatus("Initialiseringsfeil");
     }
-
-    logSection("INITIALISERING FERDIG");
 }
 
-// =======================================================
-// ALIGNMENT OG STASJONSREFERENTER
-// =======================================================
+function normalizeVector(v) {
+    const length = Math.hypot(v.x, v.y, v.z);
+    return length > 0
+        ? { x: v.x / length, y: v.y / length, z: v.z / length }
+        : { x: 0, y: 0, z: 0 };
+}
 
 function getStationValue(object) {
-    if (!object || object.class !== "IFCREFERENT") {
-        return null;
+    const sets = Array.isArray(object.properties) ? object.properties : [];
+    for (const set of sets) {
+        if (set.name !== "Pset_Stationing") continue;
+        const properties = Array.isArray(set.properties) ? set.properties : [];
+        const station = properties.find(property => property.name === "Station");
+        const value = station ? Number(station.value) : NaN;
+        if (Number.isFinite(value)) return value / 1000;
     }
-
-    const propertySets = Array.isArray(object.properties)
-        ? object.properties
-        : [];
-
-    for (let i = 0; i < propertySets.length; i += 1) {
-        const propertySet = propertySets[i];
-
-        if (
-            !propertySet ||
-            propertySet.name !== "Pset_Stationing"
-        ) {
-            continue;
-        }
-
-        const properties = Array.isArray(propertySet.properties)
-            ? propertySet.properties
-            : [];
-
-        for (let j = 0; j < properties.length; j += 1) {
-            const property = properties[j];
-
-            if (property && property.name === "Station") {
-                const rawValue = Number(property.value);
-
-                if (Number.isFinite(rawValue)) {
-                    // Novapoint leverer verdien i mm i modellen som testes.
-                    return rawValue / 1000;
-                }
-            }
-        }
-    }
-
-    const fallback = Number(
-        object.product && object.product.name
-            ? object.product.name
-            : NaN
-    );
-
-    return Number.isFinite(fallback)
-        ? fallback
-        : null;
+    const fallback = Number(object.product?.name);
+    return Number.isFinite(fallback) ? fallback : null;
 }
 
 function createAlignmentPoints(properties) {
-    if (!Array.isArray(properties)) {
-        return [];
-    }
-
-    return properties
-        .filter(function (object) {
-            return (
-                object &&
-                object.class === "IFCREFERENT" &&
-                object.product &&
-                object.product.objectType === "STATION" &&
-                object.position
-            );
-        })
-        .map(function (object) {
-            return {
-                id: Number(object.id),
-                station: getStationValue(object),
-                x: Number(object.position.x),
-                y: Number(object.position.y),
-                z: Number(object.position.z)
-            };
-        })
-        .filter(function (point) {
-            return (
-                Number.isFinite(point.id) &&
-                Number.isFinite(point.station) &&
-                Number.isFinite(point.x) &&
-                Number.isFinite(point.y) &&
-                Number.isFinite(point.z)
-            );
-        })
-        .sort(function (a, b) {
-            return a.station - b.station;
-        });
-}
-
-function normalizeVector(vector) {
-    const length = Math.sqrt(
-        vector.x * vector.x +
-        vector.y * vector.y +
-        vector.z * vector.z
-    );
-
-    if (!Number.isFinite(length) || length === 0) {
-        return { x: 0, y: 0, z: 0 };
-    }
-
-    return {
-        x: vector.x / length,
-        y: vector.y / length,
-        z: vector.z / length
-    };
+    return (Array.isArray(properties) ? properties : [])
+        .filter(object =>
+            object?.class === "IFCREFERENT" &&
+            object?.product?.objectType === "STATION" &&
+            object.position)
+        .map(object => ({
+            id: Number(object.id),
+            station: getStationValue(object),
+            x: Number(object.position.x),
+            y: Number(object.position.y),
+            z: Number(object.position.z)
+        }))
+        .filter(point => Object.values(point).every(Number.isFinite))
+        .sort((a, b) => a.station - b.station);
 }
 
 function findStationInterval(station) {
     const points = state.alignmentPoints;
-
-    if (!Array.isArray(points) || points.length < 2) {
-        return null;
+    if (points.length < 2) return null;
+    if (station <= points[0].station) return { start: points[0], end: points[1] };
+    if (station >= points.at(-1).station) {
+        return { start: points.at(-2), end: points.at(-1) };
     }
-
-    if (station <= points[0].station) {
-        return {
-            start: points[0],
-            end: points[1]
-        };
-    }
-
-    const lastIndex = points.length - 1;
-
-    if (station >= points[lastIndex].station) {
-        return {
-            start: points[lastIndex - 1],
-            end: points[lastIndex]
-        };
-    }
-
-    for (let i = 0; i < lastIndex; i += 1) {
-        if (
-            station >= points[i].station &&
-            station <= points[i + 1].station
-        ) {
-            return {
-                start: points[i],
-                end: points[i + 1]
-            };
+    for (let i = 0; i < points.length - 1; i += 1) {
+        if (station >= points[i].station && station <= points[i + 1].station) {
+            return { start: points[i], end: points[i + 1] };
         }
     }
-
     return null;
 }
 
 function evaluateStation(station) {
     const interval = findStationInterval(station);
-
-    if (!interval) {
-        return null;
-    }
-
-    const start = interval.start;
-    const end = interval.end;
-    const deltaStation = end.station - start.station;
-
-    const rawRatio = deltaStation === 0
-        ? 0
-        : (station - start.station) / deltaStation;
-
-    const ratio = Math.max(0, Math.min(1, rawRatio));
-
+    if (!interval) return null;
+    const { start, end } = interval;
+    const delta = end.station - start.station;
+    const ratio = delta === 0 ? 0 : Math.max(0, Math.min(1, (station - start.station) / delta));
     const position = {
         x: start.x + (end.x - start.x) * ratio,
         y: start.y + (end.y - start.y) * ratio,
         z: start.z + (end.z - start.z) * ratio
     };
-
     const tangent = normalizeVector({
         x: end.x - start.x,
         y: end.y - start.y,
         z: end.z - start.z
     });
-
-    const horizontalTangent = normalizeVector({
-        x: tangent.x,
-        y: tangent.y,
-        z: 0
-    });
-
+    const horizontalTangent = normalizeVector({ x: tangent.x, y: tangent.y, z: 0 });
     return {
-        station: station,
-        position: position,
-        tangent: tangent,
-        horizontalTangent: horizontalTangent,
+        station,
+        position,
+        tangent,
+        horizontalTangent,
         horizontalNormal: {
             x: -horizontalTangent.y,
             y: horizontalTangent.x,
@@ -356,93 +160,22 @@ function evaluateStation(station) {
         },
         startReferent: start,
         endReferent: end,
-        ratio: ratio
+        ratio
     };
 }
 
-function configureStationControls() {
-    const points = state.alignmentPoints;
-
-    if (!Array.isArray(points) || points.length < 2) {
-        state.alignmentLength = 0;
-
-        if (profileLength) {
-            profileLength.innerText = "Ikke beregnet";
-        }
-
-        return;
-    }
-
-    const firstStation = points[0].station;
-    const lastStation = points[points.length - 1].station;
-
-    state.alignmentLength = lastStation - firstStation;
-
-    if (profileLength) {
-        profileLength.innerText =
-            state.alignmentLength.toFixed(3) + " m";
-    }
-
-    if (stationSlider) {
-        stationSlider.min = String(firstStation);
-        stationSlider.max = String(lastStation);
-        stationSlider.step = "0.1";
-    }
-
-    if (stationInput) {
-        stationInput.min = String(firstStation);
-        stationInput.max = String(lastStation);
-        stationInput.step = "0.1";
-    }
-
-    updateStation(firstStation, false);
-}
-
-// =======================================================
-// SYNLIG STASJONSMARKØR
-// =======================================================
-
 async function removeStationMarker() {
     const api = getAPI();
-
-    if (
-        !api ||
-        !api.viewer ||
-        typeof api.viewer.removeIcon !== "function" ||
-        !state.markerIcon
-    ) {
-        return;
-    }
-
-    try {
-        await api.viewer.removeIcon(state.markerIcon);
-    }
-    catch (error) {
-        console.warn(
-            "Kunne ikke fjerne gammel stasjonsmarkør:",
-            error
-        );
-    }
-    finally {
-        state.markerIcon = null;
-    }
+    if (!state.markerIcon || typeof api?.viewer?.removeIcon !== "function") return;
+    try { await api.viewer.removeIcon(state.markerIcon); }
+    catch (error) { console.warn("Kunne ikke fjerne markør:", error); }
+    state.markerIcon = null;
 }
 
 async function updateStationMarker(frame) {
     const api = getAPI();
-
-    if (
-        !frame ||
-        !api ||
-        !api.viewer ||
-        typeof api.viewer.addIcon !== "function"
-    ) {
-        return;
-    }
-
-    const sequence = state.markerSequence + 1;
-    state.markerSequence = sequence;
-
+    if (!frame || typeof api?.viewer?.addIcon !== "function") return;
+    const sequence = ++state.markerSequence;
     const marker = {
         id: state.markerId,
         position: {
@@ -453,499 +186,259 @@ async function updateStationMarker(frame) {
         iconPath: MARKER_ICON_URL,
         size: 30
     };
-
     try {
-        if (
-            typeof api.viewer.removeIcon === "function" &&
-            state.markerIcon
-        ) {
+        if (state.markerIcon && typeof api.viewer.removeIcon === "function") {
             await api.viewer.removeIcon(state.markerIcon);
         }
-
-        if (sequence !== state.markerSequence) {
-            return;
-        }
-
+        if (sequence !== state.markerSequence) return;
         await api.viewer.addIcon(marker);
-
-        if (sequence === state.markerSequence) {
-            state.markerIcon = marker;
-        }
-    }
-    catch (error) {
-        console.error(
-            "FEIL VED OPPDATERING AV STASJONSMARKØR:",
-            error
-        );
-
+        if (sequence === state.markerSequence) state.markerIcon = marker;
+    } catch (error) {
+        console.error("MARKØRFEIL:", error);
         setStatus("Markørfeil - se Console");
     }
 }
 
-function updateStation(value, shouldLog) {
+function updateStation(value, shouldLog = true) {
+    const minimum = Number(stationSlider?.min || 0);
+    const maximum = Number(stationSlider?.max || 0);
     let station = Number(value);
-
-    if (!Number.isFinite(station)) {
-        station = 0;
-    }
-
-    const minimum = stationSlider
-        ? Number(stationSlider.min || 0)
-        : 0;
-
-    const maximum = stationSlider
-        ? Number(stationSlider.max || 0)
-        : 0;
-
-    station = Math.max(
-        Number.isFinite(minimum) ? minimum : 0,
-        Math.min(
-            station,
-            Number.isFinite(maximum) ? maximum : 0
-        )
-    );
-
+    if (!Number.isFinite(station)) station = minimum;
+    station = Math.max(minimum, Math.min(maximum, station));
     state.station = station;
-
-    if (stationInput) {
-        stationInput.value = station.toFixed(3);
-    }
-
-    if (stationSlider) {
-        stationSlider.value = String(station);
-    }
-
-    if (stationLabel) {
-        stationLabel.innerText = station.toFixed(3);
-    }
-
+    if (stationInput) stationInput.value = station.toFixed(3);
+    if (stationSlider) stationSlider.value = String(station);
+    if (stationLabel) stationLabel.innerText = station.toFixed(3);
     state.currentFrame = evaluateStation(station);
     updateStationMarker(state.currentFrame);
+    if (shouldLog && state.currentFrame) console.log("Stasjon " + station.toFixed(3), state.currentFrame);
+}
 
-    if (shouldLog !== false && state.currentFrame) {
-        console.log(
-            "Stasjon " + station.toFixed(3),
-            state.currentFrame
-        );
+function configureStationControls() {
+    if (state.alignmentPoints.length < 2) return;
+    const first = state.alignmentPoints[0].station;
+    const last = state.alignmentPoints.at(-1).station;
+    state.alignmentLength = last - first;
+    if (profileLength) profileLength.innerText = state.alignmentLength.toFixed(3) + " m";
+    if (stationSlider) Object.assign(stationSlider, { min: first, max: last, step: 0.1 });
+    if (stationInput) Object.assign(stationInput, { min: first, max: last, step: 0.1 });
+    updateStation(first, false);
+}
+
+async function removeGeneratedSectionPlane() {
+    const api = getAPI();
+    if (state.sectionPlaneIds.length && typeof api?.viewer?.removeSectionPlanes === "function") {
+        try { await api.viewer.removeSectionPlanes(state.sectionPlaneIds); }
+        catch (error) { console.warn("Kunne ikke fjerne snittplan:", error); }
     }
+    state.sectionPlaneIds = [];
 }
 
-function moveStation(offset) {
-    updateStation(state.station + offset, true);
-}
-
-// =======================================================
-// GEOMETRIDIAGNOSE
-// =======================================================
-
-function chunkArray(values, chunkSize) {
+function chunkArray(values, size) {
     const chunks = [];
-
-    for (let index = 0; index < values.length; index += chunkSize) {
-        chunks.push(values.slice(index, index + chunkSize));
-    }
-
+    for (let i = 0; i < values.length; i += size) chunks.push(values.slice(i, i + size));
     return chunks;
 }
 
-function projectWorldPointToSection(point, frame) {
-    const delta = {
-        x: Number(point.x) - frame.position.x,
-        y: Number(point.y) - frame.position.y,
-        z: Number(point.z) - frame.position.z
-    };
-
-    return {
-        offset:
-            delta.x * frame.horizontalNormal.x +
-            delta.y * frame.horizontalNormal.y,
-
-        elevation: Number(point.z),
-
-        relativeElevation: delta.z,
-
-        longitudinal:
-            delta.x * frame.horizontalTangent.x +
-            delta.y * frame.horizontalTangent.y
-    };
-}
-
-function listGeometryRelatedViewerMethods(api) {
-    const methodNames = api && api.viewer
-        ? Object.keys(api.viewer)
-        : [];
-
-    const terms = [
-        "bound",
-        "box",
-        "entity",
-        "geometr",
-        "mesh",
-        "object",
-        "position",
-        "section",
-        "triangle",
-        "vertex"
-    ];
-
-    return methodNames
-        .filter(function (name) {
-            const lower = name.toLowerCase();
-
-            return terms.some(function (term) {
-                return lower.includes(term);
-            });
-        })
-        .sort();
+function groupByModel(values) {
+    const groups = new Map();
+    for (const value of values) {
+        if (!groups.has(value.modelId)) groups.set(value.modelId, []);
+        groups.get(value.modelId).push(value);
+    }
+    return groups;
 }
 
 function flattenModelObjects(modelObjects) {
-    const flattened = [];
-
-    if (!Array.isArray(modelObjects)) {
-        return flattened;
-    }
-
-    modelObjects.forEach(function (modelEntry) {
-        const modelId = modelEntry && modelEntry.modelId
-            ? modelEntry.modelId
-            : null;
-
-        const objects = modelEntry && Array.isArray(modelEntry.objects)
-            ? modelEntry.objects
-            : [];
-
-        objects.forEach(function (object) {
+    const result = [];
+    for (const model of Array.isArray(modelObjects) ? modelObjects : []) {
+        for (const object of Array.isArray(model.objects) ? model.objects : []) {
             const runtimeId = Number(object.id);
-
-            if (modelId && Number.isFinite(runtimeId)) {
-                flattened.push({
-                    modelId: modelId,
-                    runtimeId: runtimeId
-                });
-            }
-        });
-    });
-
-    return flattened;
-}
-
-async function getPositionsForObjects(api, objects) {
-    const byModel = new Map();
-
-    objects.forEach(function (object) {
-        if (!byModel.has(object.modelId)) {
-            byModel.set(object.modelId, []);
-        }
-
-        byModel.get(object.modelId).push(object.runtimeId);
-    });
-
-    const positionedObjects = [];
-
-    for (const entry of byModel.entries()) {
-        const modelId = entry[0];
-        const runtimeIds = entry[1];
-        const batches = chunkArray(runtimeIds, 500);
-
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-            try {
-                const positions = await api.viewer.getObjectPositions(
-                    modelId,
-                    batches[batchIndex]
-                );
-
-                if (!Array.isArray(positions)) {
-                    continue;
-                }
-
-                positions.forEach(function (item) {
-                    if (!item || !item.position) {
-                        return;
-                    }
-
-                    positionedObjects.push({
-                        modelId: modelId,
-                        runtimeId: Number(item.id),
-                        position: {
-                            x: Number(item.position.x),
-                            y: Number(item.position.y),
-                            z: Number(item.position.z)
-                        }
-                    });
-                });
-            }
-            catch (error) {
-                console.warn(
-                    "Posisjonsdiagnose feilet for modell " + modelId + ":",
-                    error
-                );
+            if (model.modelId && Number.isFinite(runtimeId)) {
+                result.push({ modelId: model.modelId, runtimeId });
             }
         }
     }
-
-    return positionedObjects;
+    return result;
 }
 
-async function getPropertiesForCandidates(api, candidates) {
-    const byModel = new Map();
+function projectPoint(point, frame) {
+    const dx = Number(point.x) - frame.position.x;
+    const dy = Number(point.y) - frame.position.y;
+    const dz = Number(point.z) - frame.position.z;
+    return {
+        offset: dx * frame.horizontalNormal.x + dy * frame.horizontalNormal.y,
+        longitudinal: dx * frame.horizontalTangent.x + dy * frame.horizontalTangent.y,
+        elevation: Number(point.z),
+        relativeElevation: dz
+    };
+}
 
-    candidates.forEach(function (candidate) {
-        if (!byModel.has(candidate.modelId)) {
-            byModel.set(candidate.modelId, []);
-        }
-
-        byModel.get(candidate.modelId).push(candidate.runtimeId);
+function boxCandidate(modelId, item, frame) {
+    const box = item?.boundingBox;
+    if (!box?.min || !box?.max) return null;
+    const corners = [];
+    for (const x of [box.min.x, box.max.x])
+        for (const y of [box.min.y, box.max.y])
+            for (const z of [box.min.z, box.max.z]) corners.push(projectPoint({ x, y, z }, frame));
+    const range = key => ({
+        min: Math.min(...corners.map(point => point[key])),
+        max: Math.max(...corners.map(point => point[key]))
     });
+    const o = range("offset");
+    const l = range("longitudinal");
+    const e = range("elevation");
+    return {
+        modelId,
+        runtimeId: Number(item.id),
+        boundingBox: box,
+        minOffset: o.min,
+        maxOffset: o.max,
+        minLongitudinal: l.min,
+        maxLongitudinal: l.max,
+        minElevation: e.min,
+        maxElevation: e.max,
+        crossesSectionPlane: l.min <= 0 && l.max >= 0
+    };
+}
 
-    const results = [];
-
-    for (const entry of byModel.entries()) {
-        const modelId = entry[0];
-        const runtimeIds = entry[1];
-        const batches = chunkArray(runtimeIds, 200);
-
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+async function getBoundingBoxes(api, objects, frame, warnings) {
+    if (typeof api.viewer.getObjectBoundingBoxes !== "function") {
+        warnings.push("getObjectBoundingBoxes er ikke tilgjengelig.");
+        return [];
+    }
+    const byModel = groupByModel(objects);
+    const result = [];
+    for (const [modelId, modelObjects] of byModel) {
+        for (const batch of chunkArray(modelObjects.map(o => o.runtimeId), 300)) {
             try {
-                const properties = await api.viewer.getObjectProperties(
-                    modelId,
-                    batches[batchIndex]
-                );
-
-                if (!Array.isArray(properties)) {
-                    continue;
+                const boxes = await api.viewer.getObjectBoundingBoxes(modelId, batch);
+                for (const item of Array.isArray(boxes) ? boxes : []) {
+                    const candidate = boxCandidate(modelId, item, frame);
+                    if (candidate) result.push(candidate);
                 }
+            } catch (error) {
+                warnings.push("Bounding boxes feilet for " + modelId + ": " + error.message);
+            }
+        }
+    }
+    return result;
+}
 
-                properties.forEach(function (object) {
-                    results.push({
-                        modelId: modelId,
+async function getCandidateProperties(api, candidates) {
+    const byModel = groupByModel(candidates.slice(0, 200));
+    const result = [];
+    for (const [modelId, items] of byModel) {
+        for (const batch of chunkArray(items.map(o => o.runtimeId), 200)) {
+            try {
+                const properties = await api.viewer.getObjectProperties(modelId, batch);
+                for (const object of Array.isArray(properties) ? properties : []) {
+                    result.push({
+                        modelId,
                         runtimeId: Number(object.id),
                         className: object.class || "",
-                        name:
-                            object.product && object.product.name
-                                ? object.product.name
-                                : "",
-                        objectType:
-                            object.product && object.product.objectType
-                                ? object.product.objectType
-                                : "",
-                        propertySetNames: Array.isArray(object.properties)
-                            ? object.properties.map(function (set) {
-                                return set.name;
-                            })
-                            : []
+                        name: object.product?.name || "",
+                        objectType: object.product?.objectType || "",
+                        propertySetNames: (object.properties || []).map(set => set.name)
                     });
-                });
-            }
-            catch (error) {
-                console.warn(
-                    "Egenskapsdiagnose feilet for modell " + modelId + ":",
-                    error
-                );
+                }
+            } catch (error) {
+                console.warn("Egenskapsdiagnose feilet:", error);
             }
         }
     }
-
-    return results;
+    return result;
 }
 
 async function runGeometryDiagnostic(api, frame, sectionWidth) {
     const diagnostic = {
         station: frame.station,
-        sectionWidth: sectionWidth,
-        longitudinalTolerance: 1.0,
+        sectionWidth,
+        longitudinalTolerance: 1,
         verticalBelow: 8,
         verticalAbove: 12,
-        viewerMethods: [],
+        viewerMethods: Object.keys(api.viewer).filter(name =>
+            /(bound|box|entit|geometr|mesh|object|position|section|triangle|vertex)/i.test(name)).sort(),
         totalObjects: 0,
         inspectedObjects: 0,
-        positionedObjects: 0,
+        boundingBoxes: 0,
+        boundingBoxCandidateCount: 0,
         candidateCount: 0,
         candidates: [],
         candidateProperties: [],
+        getEntitiesDiagnostic: null,
+        presentation: null,
+        sectionPlanes: null,
         warnings: []
     };
 
-    if (
-        !api ||
-        !api.viewer ||
-        typeof api.viewer.getObjects !== "function" ||
-        typeof api.viewer.getObjectPositions !== "function"
-    ) {
-        diagnostic.warnings.push(
-            "Viewer API mangler getObjects eller getObjectPositions."
-        );
-        return diagnostic;
-    }
-
-    diagnostic.viewerMethods = listGeometryRelatedViewerMethods(api);
-
-    let modelObjects = null;
-
     try {
-        modelObjects = await api.viewer.getObjects({});
+        const modelObjects = await api.viewer.getObjects({});
+        const allObjects = flattenModelObjects(modelObjects);
+        diagnostic.totalObjects = allObjects.length;
+        const inspected = allObjects.slice(0, 15000);
+        diagnostic.inspectedObjects = inspected.length;
+        if (allObjects.length > inspected.length) diagnostic.warnings.push("Begrenset til 15000 objekter.");
+
+        if (typeof api.viewer.getPresentation === "function") {
+            try { diagnostic.presentation = await api.viewer.getPresentation(); }
+            catch (error) { diagnostic.warnings.push("getPresentation feilet: " + error.message); }
+        }
+        if (typeof api.viewer.getSectionPlanes === "function") {
+            try { diagnostic.sectionPlanes = await api.viewer.getSectionPlanes(); }
+            catch (error) { diagnostic.warnings.push("getSectionPlanes feilet: " + error.message); }
+        }
+
+        const boxes = await getBoundingBoxes(api, inspected, frame, diagnostic.warnings);
+        diagnostic.boundingBoxes = boxes.length;
+        const halfWidth = sectionWidth / 2;
+        const minElevation = frame.position.z - diagnostic.verticalBelow;
+        const maxElevation = frame.position.z + diagnostic.verticalAbove;
+        diagnostic.candidates = boxes.filter(box =>
+            box.minLongitudinal <= diagnostic.longitudinalTolerance &&
+            box.maxLongitudinal >= -diagnostic.longitudinalTolerance &&
+            box.minOffset <= halfWidth &&
+            box.maxOffset >= -halfWidth &&
+            box.minElevation <= maxElevation &&
+            box.maxElevation >= minElevation);
+        diagnostic.boundingBoxCandidateCount = diagnostic.candidates.length;
+        diagnostic.candidateCount = diagnostic.candidates.length;
+        diagnostic.candidateProperties = await getCandidateProperties(api, diagnostic.candidates);
+
+        const entityTest = {
+            available: typeof api.viewer.getEntities === "function",
+            functionArity: typeof api.viewer.getEntities === "function" ? api.viewer.getEntities.length : null,
+            attempted: false,
+            response: null,
+            error: null
+        };
+        if (entityTest.available && diagnostic.candidates.length) {
+            const sample = diagnostic.candidates.slice(0, 5);
+            const modelId = sample[0].modelId;
+            const ids = sample.filter(item => item.modelId === modelId).map(item => item.runtimeId);
+            entityTest.attempted = true;
+            try { entityTest.response = await api.viewer.getEntities(modelId, ids); }
+            catch (error) { entityTest.error = error.message || String(error); }
+        }
+        diagnostic.getEntitiesDiagnostic = entityTest;
+    } catch (error) {
+        diagnostic.warnings.push(error.message || String(error));
     }
-    catch (error) {
-        diagnostic.warnings.push(
-            "getObjects({}) feilet: " +
-            (error && error.message ? error.message : String(error))
-        );
-        return diagnostic;
-    }
-
-    const allObjects = flattenModelObjects(modelObjects);
-    diagnostic.totalObjects = allObjects.length;
-
-    const maximumObjects = 15000;
-    const inspectedObjects = allObjects.slice(0, maximumObjects);
-    diagnostic.inspectedObjects = inspectedObjects.length;
-
-    if (allObjects.length > maximumObjects) {
-        diagnostic.warnings.push(
-            "Diagnosen ble begrenset til de første " +
-            maximumObjects +
-            " objektene."
-        );
-    }
-
-    const positionedObjects = await getPositionsForObjects(
-        api,
-        inspectedObjects
-    );
-
-    diagnostic.positionedObjects = positionedObjects.length;
-
-    const halfWidth = sectionWidth / 2;
-
-    diagnostic.candidates = positionedObjects
-        .map(function (object) {
-            const local = projectWorldPointToSection(
-                object.position,
-                frame
-            );
-
-            return {
-                modelId: object.modelId,
-                runtimeId: object.runtimeId,
-                position: object.position,
-                offset: local.offset,
-                elevation: local.elevation,
-                relativeElevation: local.relativeElevation,
-                longitudinal: local.longitudinal
-            };
-        })
-        .filter(function (object) {
-            return (
-                Math.abs(object.longitudinal) <=
-                    diagnostic.longitudinalTolerance &&
-                Math.abs(object.offset) <= halfWidth &&
-                object.relativeElevation >=
-                    -diagnostic.verticalBelow &&
-                object.relativeElevation <=
-                    diagnostic.verticalAbove
-            );
-        })
-        .sort(function (a, b) {
-            return Math.abs(a.longitudinal) - Math.abs(b.longitudinal);
-        });
-
-    diagnostic.candidateCount = diagnostic.candidates.length;
-
-    const propertyCandidates = diagnostic.candidates.slice(0, 200);
-
-    diagnostic.candidateProperties = await getPropertiesForCandidates(
-        api,
-        propertyCandidates
-    );
-
     return diagnostic;
 }
 
-// =======================================================
-// SYNLIG SNITTPLAN
-// =======================================================
-
-async function removeGeneratedSectionPlane() {
-    const api = getAPI();
-
-    if (
-        !api ||
-        !api.viewer ||
-        typeof api.viewer.removeSectionPlanes !== "function"
-    ) {
-        state.sectionPlaneIds = [];
-        state.sectionPlane = null;
-        return;
-    }
-
-    if (state.sectionPlaneIds.length === 0) {
-        state.sectionPlane = null;
-        return;
-    }
-
-    try {
-        await api.viewer.removeSectionPlanes(
-            state.sectionPlaneIds
-        );
-    }
-    catch (error) {
-        console.warn(
-            "Kunne ikke fjerne tidligere snittplan:",
-            error
-        );
-    }
-    finally {
-        state.sectionPlaneIds = [];
-        state.sectionPlane = null;
-    }
-}
-
 async function generateProfile() {
-    if (!state.selectedObject) {
+    if (!state.selectedObject || !state.currentFrame) {
         alert("Velg en profileringslinje først.");
         return;
     }
-
-    if (!state.currentFrame) {
-        alert("Fant ingen stasjonsramme.");
-        return;
-    }
-
     const api = getAPI();
-
-    if (
-        !api ||
-        !api.viewer ||
-        typeof api.viewer.addSectionPlane !== "function"
-    ) {
-        alert("Viewer API støtter ikke addSectionPlane.");
-        setStatus("Snittplan er ikke tilgjengelig");
-        return;
-    }
-
     const frame = state.currentFrame;
     const tangent = frame.horizontalTangent;
-
-    if (
-        !tangent ||
-        !Number.isFinite(tangent.x) ||
-        !Number.isFinite(tangent.y) ||
-        (
-            Math.abs(tangent.x) < 1e-9 &&
-            Math.abs(tangent.y) < 1e-9
-        )
-    ) {
-        alert("Kunne ikke beregne retning for snittplanet.");
-        setStatus("Ugyldig retning for snittplan");
-        return;
-    }
-
-    setStatus("Oppretter snittplan...");
-
     try {
+        setStatus("Oppretter snittplan...");
         await removeGeneratedSectionPlane();
-
-        const requestedPlane = {
+        const planes = await api.viewer.addSectionPlane({
             positionX: frame.position.x * 1000,
             positionY: frame.position.y * 1000,
             positionZ: frame.position.z * 1000,
@@ -953,399 +446,96 @@ async function generateProfile() {
             directionY: -tangent.y,
             directionZ: 0,
             controlsVisible: true
-        };
+        });
+        state.sectionPlaneIds = (Array.isArray(planes) ? planes : [])
+            .map(plane => Number(plane.id)).filter(Number.isFinite);
 
-        const addedPlanes =
-            await api.viewer.addSectionPlane(requestedPlane);
-
-        const returnedPlanes = Array.isArray(addedPlanes)
-            ? addedPlanes
-            : [];
-
-        state.sectionPlane = returnedPlanes.length > 0
-            ? returnedPlanes[0]
-            : requestedPlane;
-
-        state.sectionPlaneIds = returnedPlanes
-            .map(function (plane) {
-                return Number(plane.id);
-            })
-            .filter(function (id) {
-                return Number.isFinite(id);
-            });
-
-        logResult(
-            "OPPRETTET SNITTPLAN",
-            {
-                station: frame.station,
-                frame: frame,
-                requestedPlane: requestedPlane,
-                returnedPlanes: returnedPlanes,
-                sectionPlaneIds: state.sectionPlaneIds
-            }
-        );
-
-        const sectionWidth = sectionWidthInput
-            ? Number(sectionWidthInput.value)
-            : 50;
-
-        const svgShell = renderProfileShell(
-            profileSvg,
-            {
-                station: frame.station,
-                alignmentName:
-                    state.selectedObject &&
-                    state.selectedObject.product
-                        ? state.selectedObject.product.name
-                        : "Profileringslinje",
-                centerElevation: frame.position.z,
-                sectionWidth:
-                    Number.isFinite(sectionWidth) &&
-                    sectionWidth > 0
-                        ? sectionWidth
-                        : 50,
-                verticalBelow: 8,
-                verticalAbove: 12
-            }
-        );
-
-        logResult(
-            "SVG-SKALL",
-            svgShell
-        );
+        const widthValue = Number(sectionWidthInput?.value);
+        const sectionWidth = Number.isFinite(widthValue) && widthValue > 0 ? widthValue : 50;
+        renderProfileShell(profileSvg, {
+            station: frame.station,
+            alignmentName: state.selectedObject.product?.name || "Profileringslinje",
+            centerElevation: frame.position.z,
+            sectionWidth,
+            verticalBelow: 8,
+            verticalAbove: 12,
+            version: VERSION
+        });
 
         setStatus("Kjører geometridiagnose...");
-
-        state.geometryDiagnostic = await runGeometryDiagnostic(
-            api,
-            frame,
-            Number.isFinite(sectionWidth) && sectionWidth > 0
-                ? sectionWidth
-                : 50
-        );
-
-        logResult(
-            "GEOMETRIDIAGNOSE",
-            state.geometryDiagnostic
-        );
-
-        console.table(
-            state.geometryDiagnostic.candidates.slice(0, 50)
-        );
-
-        console.table(
-            state.geometryDiagnostic.candidateProperties.slice(0, 50)
-        );
-
-        renderGeometryDiagnostic(
-            profileSvg,
-            state.geometryDiagnostic
-        );
-
-        setStatus(
-            "Snittplan og SVG-skall ved stasjon " +
-            frame.station.toFixed(3) +
-            " - " +
-            state.geometryDiagnostic.candidateCount +
-            " geometrikandidater"
-        );
-    }
-    catch (error) {
-        console.error(
-            "FEIL VED OPPRETTELSE AV SNITTPLAN:",
-            error
-        );
-
-        setStatus("Feil ved opprettelse av snittplan");
-
-        alert(
-            error && error.message
-                ? error.message
-                : String(error)
-        );
-    }
-}
-
-// =======================================================
-// VALG AV PROFILERINGSLINJE
-// =======================================================
-
-function updateProfileUi(object, runtimeId) {
-    const name =
-        object && object.product && object.product.name
-            ? object.product.name
-            : "Ukjent profil";
-
-    if (profileName) {
-        profileName.value = name;
-    }
-
-    if (profileId) {
-        profileId.innerText = String(runtimeId);
+        state.geometryDiagnostic = await runGeometryDiagnostic(api, frame, sectionWidth);
+        renderGeometryDiagnostic(profileSvg, state.geometryDiagnostic);
+        logResult("GEOMETRIDIAGNOSE", state.geometryDiagnostic);
+        logResult("VIEWER-METODER FOR GEOMETRI", state.geometryDiagnostic.viewerMethods);
+        logResult("BOUNDING-BOX-KANDIDATER", state.geometryDiagnostic.candidates);
+        logResult("GETENTITIES-DIAGNOSE", state.geometryDiagnostic.getEntitiesDiagnostic);
+        logResult("VIEW-PRESENTATION", state.geometryDiagnostic.presentation);
+        logResult("AKTIVE SNITTPLAN", state.geometryDiagnostic.sectionPlanes);
+        console.table(state.geometryDiagnostic.candidates.slice(0, 50));
+        console.table(state.geometryDiagnostic.candidateProperties.slice(0, 50));
+        setStatus("Snitt ved stasjon " + frame.station.toFixed(3) + " - " +
+            state.geometryDiagnostic.candidateCount + " bounding-box-kandidater");
+    } catch (error) {
+        console.error("FEIL VED GENERERING:", error);
+        setStatus("Feil ved generering - se Console");
+        alert(error.message || String(error));
     }
 }
 
 async function selectProfile() {
+    const api = getAPI();
     try {
-        const api = getAPI();
-
-        if (!api || !api.viewer) {
-            alert("Viewer API er ikke tilgjengelig.");
-            return;
-        }
-
         setStatus("Leser valgt objekt...");
-
         await removeStationMarker();
         await removeGeneratedSectionPlane();
         clearProfileSvg(profileSvg);
-
         const selection = await api.viewer.getSelection();
         logResult("SELECTION", selection);
-
-        if (!selection || selection.length === 0) {
-            alert("Ingen objekter er valgt i modellen.");
-            setStatus("Ingen objekter valgt");
-            return;
+        if (!selection?.length) throw new Error("Ingen objekter er valgt.");
+        if (selection.length > 1) throw new Error("Velg bare én profileringslinje.");
+        const { modelId, objectRuntimeIds = [] } = selection[0];
+        if (!modelId || !objectRuntimeIds.length) throw new Error("Seleksjonen mangler objekt-ID.");
+        const properties = await api.viewer.getObjectProperties(modelId, objectRuntimeIds);
+        const selected = properties?.[0];
+        if (String(selected?.class || "").toUpperCase() !== "IFCALIGNMENT") {
+            throw new Error("Valgt objekt er ikke IFCALIGNMENT.");
         }
-
-        if (selection.length > 1) {
-            alert("Velg bare én profileringslinje.");
-            setStatus("Flere objekter valgt");
-            return;
-        }
-
-        const modelId = selection[0].modelId;
-        const runtimeIds =
-            selection[0].objectRuntimeIds || [];
-
-        if (!modelId || runtimeIds.length === 0) {
-            throw new Error(
-                "Seleksjonen mangler modelId eller objectRuntimeIds."
-            );
-        }
-
-        const selectedProperties =
-            await api.viewer.getObjectProperties(
-                modelId,
-                runtimeIds
-            );
-
-        logResult("OBJECT PROPERTIES", selectedProperties);
-
-        if (
-            !selectedProperties ||
-            selectedProperties.length === 0
-        ) {
-            throw new Error(
-                "Fant ingen egenskaper for valgt objekt."
-            );
-        }
-
-        const selectedObject = selectedProperties[0];
-        const ifcClass = String(
-            selectedObject.class || ""
-        ).toUpperCase();
-
-        if (ifcClass !== "IFCALIGNMENT") {
-            alert("Valgt objekt er ikke IFCALIGNMENT.");
-            setStatus("Valgt objekt er " + ifcClass);
-            return;
-        }
-
         state.modelId = modelId;
-        state.runtimeIds = runtimeIds.slice();
-        state.selectedObject = selectedObject;
-
-        updateProfileUi(selectedObject, runtimeIds[0]);
-
-        const recursiveChildren =
-            await api.viewer.getHierarchyChildren(
-                modelId,
-                runtimeIds,
-                undefined,
-                true
-            );
-
-        logResult(
-            "REKURSIVE HIERARKIBARN",
-            recursiveChildren
-        );
-
-        const hierarchyIds = Array.isArray(recursiveChildren)
-            ? recursiveChildren
-                .map(function (item) {
-                    return Number(item.id);
-                })
-                .filter(function (id) {
-                    return Number.isFinite(id);
-                })
-            : [];
-
-        if (hierarchyIds.length === 0) {
-            throw new Error(
-                "Fant ingen objekter i alignmenthierarkiet."
-            );
-        }
-
-        const hierarchyProperties =
-            await api.viewer.getObjectProperties(
-                modelId,
-                hierarchyIds
-            );
-
-        logResult(
-            "EGENSKAPER FOR ALIGNMENTHIERARKIET",
-            hierarchyProperties
-        );
-
-        state.alignmentPoints = createAlignmentPoints(
-            hierarchyProperties
-        );
-
-        logResult(
-            "STASJONSREFERENTER",
-            state.alignmentPoints
-        );
-
+        state.runtimeIds = [...objectRuntimeIds];
+        state.selectedObject = selected;
+        if (profileName) profileName.value = selected.product?.name || "Ukjent profil";
+        if (profileId) profileId.innerText = String(objectRuntimeIds[0]);
+        const children = await api.viewer.getHierarchyChildren(modelId, objectRuntimeIds, undefined, true);
+        const ids = (children || []).map(item => Number(item.id)).filter(Number.isFinite);
+        const hierarchyProperties = await api.viewer.getObjectProperties(modelId, ids);
+        state.alignmentPoints = createAlignmentPoints(hierarchyProperties);
+        logResult("STASJONSREFERENTER", state.alignmentPoints);
+        if (state.alignmentPoints.length < 2) throw new Error("Fant ikke nok stasjonsreferenter.");
         configureStationControls();
-
-        if (state.alignmentPoints.length < 2) {
-            setStatus(
-                "Profil valgt - fant ikke nok stasjonsreferenter"
-            );
-            return;
-        }
-
-        setStatus(
-            "Profil valgt - " +
-            state.alignmentPoints.length +
-            " stasjonsreferenter, lengde " +
-            state.alignmentLength.toFixed(3) +
-            " m"
-        );
-    }
-    catch (error) {
+        setStatus("Profil valgt - " + state.alignmentPoints.length +
+            " stasjonsreferenter, lengde " + state.alignmentLength.toFixed(3) + " m");
+    } catch (error) {
         console.error("FEIL VED PROFILVALG:", error);
-        setStatus("Feil ved lesing av profil");
-
-        alert(
-            error && error.message
-                ? error.message
-                : String(error)
-        );
+        setStatus("Feil ved profilvalg");
+        alert(error.message || String(error));
     }
 }
-
-// =======================================================
-// EKSPORT, FORELØPIG IKKE IMPLEMENTERT
-// =======================================================
-
-function exportSvg() {
-    setStatus("SVG-eksport er ikke implementert ennå");
-}
-
-function exportPng() {
-    setStatus("PNG-eksport er ikke implementert ennå");
-}
-
-// =======================================================
-// HENDELSER
-// =======================================================
 
 function bindEvents() {
-    if (btnSelectProfile) {
-        btnSelectProfile.addEventListener(
-            "click",
-            selectProfile
-        );
-    }
-
-    if (btnGenerate) {
-        btnGenerate.addEventListener(
-            "click",
-            generateProfile
-        );
-    }
-
-    if (btnExportSvg) {
-        btnExportSvg.addEventListener(
-            "click",
-            exportSvg
-        );
-    }
-
-    if (btnExportPng) {
-        btnExportPng.addEventListener(
-            "click",
-            exportPng
-        );
-    }
-
-    if (btnMinus10) {
-        btnMinus10.addEventListener(
-            "click",
-            function () {
-                moveStation(-10);
-            }
-        );
-    }
-
-    if (btnMinus1) {
-        btnMinus1.addEventListener(
-            "click",
-            function () {
-                moveStation(-1);
-            }
-        );
-    }
-
-    if (btnPlus1) {
-        btnPlus1.addEventListener(
-            "click",
-            function () {
-                moveStation(1);
-            }
-        );
-    }
-
-    if (btnPlus10) {
-        btnPlus10.addEventListener(
-            "click",
-            function () {
-                moveStation(10);
-            }
-        );
-    }
-
-    if (stationSlider) {
-        stationSlider.addEventListener(
-            "input",
-            function (event) {
-                updateStation(
-                    event.target.value,
-                    true
-                );
-            }
-        );
-    }
-
-    if (stationInput) {
-        stationInput.addEventListener(
-            "change",
-            function (event) {
-                updateStation(
-                    event.target.value,
-                    true
-                );
-            }
-        );
-    }
-
+    $("btnSelectProfile")?.addEventListener("click", selectProfile);
+    $("btnGenerate")?.addEventListener("click", generateProfile);
+    $("btnExportSvg")?.addEventListener("click", () => setStatus("SVG-eksport kommer senere"));
+    $("btnExportPng")?.addEventListener("click", () => setStatus("PNG-eksport kommer senere"));
+    $("minus10")?.addEventListener("click", () => updateStation(state.station - 10));
+    $("minus1")?.addEventListener("click", () => updateStation(state.station - 1));
+    $("plus1")?.addEventListener("click", () => updateStation(state.station + 1));
+    $("plus10")?.addEventListener("click", () => updateStation(state.station + 10));
+    stationSlider?.addEventListener("input", event => updateStation(event.target.value));
+    stationInput?.addEventListener("change", event => updateStation(event.target.value));
     console.log("Events registrert");
 }
 
-window.addEventListener("beforeunload", function () {
+window.addEventListener("beforeunload", () => {
     removeStationMarker();
     removeGeneratedSectionPlane();
 });
