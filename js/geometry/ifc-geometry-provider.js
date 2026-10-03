@@ -57,7 +57,7 @@ export class IfcGeometryProvider extends GeometryProvider {
 
             const schema = this.ifcApi.GetModelSchema(this.ifcModelId);
             let coordinationMatrix = null;
-            let worldTransformMatrix = null;
+
             try {
                 coordinationMatrix = Array.from(
                     this.ifcApi.GetCoordinationMatrix(this.ifcModelId) || []
@@ -66,19 +66,13 @@ export class IfcGeometryProvider extends GeometryProvider {
             catch (error) {
                 console.warn("GetCoordinationMatrix feilet:", error);
             }
-            try {
-                worldTransformMatrix = Array.from(
-                    this.ifcApi.GetWorldTransformMatrix(this.ifcModelId) || []
-                );
-            }
-            catch (error) {
-                console.warn("GetWorldTransformMatrix feilet:", error);
-            }
+
             let meshCount = 0;
 
             this.ifcApi.StreamAllMeshes(this.ifcModelId, flatMesh => {
                 const expressId = Number(flatMesh.expressID);
                 let line = null;
+
                 try {
                     line = this.ifcApi.GetLine(this.ifcModelId, expressId, false);
                 }
@@ -94,6 +88,7 @@ export class IfcGeometryProvider extends GeometryProvider {
                     className: line?.constructor?.name || "IFCPRODUCT",
                     name: String(valueOf(line?.Name) || "")
                 };
+
                 this.entities.push(entity);
                 if (entity.globalId) this.globalIdIndex.set(entity.globalId, entity);
 
@@ -127,6 +122,7 @@ export class IfcGeometryProvider extends GeometryProvider {
                         transform: placed.flatTransformation,
                         color: placed.color || null
                     }));
+
                     meshCount += 1;
                     geometry.delete?.();
                 }
@@ -139,17 +135,17 @@ export class IfcGeometryProvider extends GeometryProvider {
                 entityCount: this.entities.length,
                 meshCount,
                 webIfcVersion: WEB_IFC_VERSION,
-                coordinationMatrix,
-                worldTransformMatrix
+                coordinationMatrix
             };
+
             console.log("===== IFC-KOORDINATMATRISER =====");
             console.dir({
                 sourceId: this.id,
                 fileName: this.file?.name || "",
                 schema,
-                coordinationMatrix,
-                worldTransformMatrix
+                coordinationMatrix
             });
+
             this.status = "ready";
         }
         catch (error) {
@@ -177,9 +173,14 @@ export class IfcGeometryProvider extends GeometryProvider {
 
     close() {
         if (this.ifcApi && this.ifcModelId !== null) {
-            try { this.ifcApi.CloseModel(this.ifcModelId); }
-            catch (_) { /* no-op */ }
+            try {
+                this.ifcApi.CloseModel(this.ifcModelId);
+            }
+            catch (_) {
+                // no-op
+            }
         }
+
         this.ifcModelId = null;
         this.globalIdIndex.clear();
         this.meshIndex.clear();
