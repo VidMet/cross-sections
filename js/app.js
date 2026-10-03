@@ -2,7 +2,76 @@ import{VERSION,BUILD_DATE,APP_NAME}from"./versions.js";import{connectTC,getAPI,s
 const R=new GeometryRegistry(),S={api:null,points:[],selected:null,station:0,frame:null,marker:null,planeIds:[]},$=id=>document.getElementById(id),markerUrl=new URL("../assets/station-marker.png",import.meta.url).href;
 function log(n,v){console.log(`===== ${n} =====`);console.dir(v);}function typeLabel(s){return s.type.toUpperCase()+" · "+s.origin+" · "+s.status;}
 function renderSources(){const box=$("geometrySourceList"),sum=R.summary();box.innerHTML="";for(const s of sum.sources){const row=document.createElement("div");row.className=`geometry-source geometry-source-${s.status}`;const a=document.createElement("div");a.className="geometry-source-main";a.textContent=s.name;const b=document.createElement("div");b.className="geometry-source-details";b.textContent=typeLabel(s)+(s.entityCount?` · ${s.entityCount} entiteter`:"");const x=document.createElement("button");x.textContent="Fjern";x.className="geometry-source-remove";x.onclick=()=>{R.remove(s.id);renderSources();};row.append(a,b,x);box.appendChild(row);}$("geometrySourceSummary").textContent=`${sum.sourceCount} kilder · ${sum.viewerCount} fra visning · ${sum.localCount} lokale · ${sum.ifcCount} IFC + ${sum.trbCount} TRB`;}
-async function discoverModels(){const api=getAPI();setStatus("Henter aktive modeller...");try{const methods=["getModels","getModelFiles"];let models=[];for(const name of methods){if(typeof api.viewer?.[name]==="function"){models=await api.viewer[name]();if(Array.isArray(models))break;}}if(!Array.isArray(models))models=[];log("AKTIVE VIEWER-MODELLER",models);R.syncViewerModels(models);renderSources();setStatus(`${R.summary().viewerCount} aktive IFC/TRB-modeller funnet`);}catch(e){console.error(e);setStatus("Kunne ikke hente aktive modeller - bruk lokale filer");}}
+async function discoverModels() {
+    const api = getAPI();
+    setStatus("Henter modeller som er synlige i aktiv visning...");
+
+    try {
+        const visibleObjectGroups = await api.viewer.getObjects(
+            {},
+            { visible: true }
+        );
+
+        const visibleModelIds = new Set(
+            (Array.isArray(visibleObjectGroups) ? visibleObjectGroups : [])
+                .filter(group =>
+                    group &&
+                    group.modelId &&
+                    Array.isArray(group.objects) &&
+                    group.objects.length > 0
+                )
+                .map(group => String(group.modelId))
+        );
+
+        let allModels = [];
+
+        if (typeof api.viewer.getModels === "function") {
+            allModels = await api.viewer.getModels();
+        }
+        else if (typeof api.viewer.getModelFiles === "function") {
+            allModels = await api.viewer.getModelFiles();
+        }
+
+        if (!Array.isArray(allModels)) {
+            allModels = [];
+        }
+
+        const visibleModels = allModels.filter(model => {
+            const identifiers = [
+                model.modelId,
+                model.id,
+                model.fileId,
+                model.versionId
+            ]
+                .filter(value => value !== undefined && value !== null)
+                .map(String);
+
+            return identifiers.some(identifier =>
+                visibleModelIds.has(identifier)
+            );
+        });
+
+        log("SYNLIGE OBJEKTGRUPPER", visibleObjectGroups);
+        log("MODELLER I PROSJEKT/VISNING", allModels);
+        log("MODELLER SOM ER SYNLIGE I AKTIV VISNING", visibleModels);
+
+        R.syncViewerModels(visibleModels);
+        renderSources();
+
+        const summary = R.summary();
+
+        setStatus(
+            `${summary.viewerCount} synlige IFC/TRB-modeller funnet`
+        );
+    }
+    catch (error) {
+        console.error("FEIL VED HENTING AV SYNLIGE MODELLER:", error);
+        setStatus(
+            "Kunne ikke hente synlige modeller - bruk lokale reservefiler"
+        );
+    }
+}
+
 async function localFiles(e){await R.addLocalFiles(e.target.files,()=>renderSources());renderSources();log("GEOMETRIKILDER",R.summary());e.target.value="";}
 const norm=v=>{const n=Math.hypot(v.x,v.y,v.z);return n?{x:v.x/n,y:v.y/n,z:v.z/n}:{x:0,y:0,z:0};};function stationOf(o){for(const p of o.properties||[]){const v=(p.properties||[]).find(x=>x.name==="Station");if(p.name==="Pset_Stationing"&&Number.isFinite(+v?.value))return+v.value/1000;}return Number(o.product?.name);}
 function evaluate(st){const p=S.points;if(p.length<2)return null;let a=p[0],b=p[1];for(let i=0;i<p.length-1;i++)if(st>=p[i].station&&st<=p[i+1].station){a=p[i];b=p[i+1];break;}if(st>=p.at(-1).station){a=p.at(-2);b=p.at(-1);}const r=Math.max(0,Math.min(1,(st-a.station)/(b.station-a.station))),pos={x:a.x+(b.x-a.x)*r,y:a.y+(b.y-a.y)*r,z:a.z+(b.z-a.z)*r},h=norm({x:b.x-a.x,y:b.y-a.y,z:0});return{station:st,position:pos,horizontalTangent:h,horizontalNormal:{x:-h.y,y:h.x,z:0}};}
