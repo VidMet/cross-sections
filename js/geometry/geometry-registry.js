@@ -1,1 +1,278 @@
-import{IfcGeometryProvider}from"./ifc-geometry-provider.js";import{TrbGeometryProvider}from"./trb-geometry-provider.js";const ext=n=>(String(n||"").split(".").pop()||"").toLowerCase(),base=n=>String(n||"").replace(/\.(ifc|trb|trimbim)$/i,"").toLowerCase();export class GeometryRegistry{constructor(){this.providers=[];this.counter=1;}create(o){const e=ext(o.name),id=o.id||`source-${this.counter++}`;if(e==="ifc")return new IfcGeometryProvider({...o,id});if(e==="trb"||e==="trimbim")return new TrbGeometryProvider({...o,id});return null;}syncViewerModels(models){const seen=new Set();for(const m of models){const modelId=String(m.modelId||m.id||m.fileId||m.versionId||""),name=m.name||m.fileName||m.displayName||`${modelId}.unknown`,id=`viewer-${modelId}`;if(!["ifc","trb","trimbim"].includes(ext(name)))continue;seen.add(id);let p=this.providers.find(x=>x.id===id);if(!p){p=this.create({id,name,origin:"viewer",modelId,modelSpec:m});if(p)this.providers.push(p);}else{p.modelSpec=m;p.name=name;}}for(const p of[...this.providers])if(p.origin==="viewer"&&!seen.has(p.id)&&!p.file)this.remove(p.id);}async addLocalFiles(files,cb){for(const file of Array.from(files||[])){let p=this.providers.find(x=>base(x.name)===base(file.name)&&x.type===ext(file.name));if(!p){p=this.create({name:file.name,origin:"local",file});if(!p)continue;this.providers.push(p);}else{p.attachFile(file);p.origin=p.origin==="viewer"?"viewer+local":"local";}cb?.();await p.open();cb?.();}}remove(id){const i=this.providers.findIndex(x=>x.id===id);if(i<0)return false;this.providers[i].close();this.providers.splice(i,1);return true;}clearLocal(){for(const p of[...this.providers]){if(p.origin==="local")this.remove(p.id);else if(p.origin==="viewer+local"){p.file=null;p.origin="viewer";p.status="discovered";p.entities=[];}}}summary(){const s=this.providers.map(x=>x.getSummary());return{sourceCount:s.length,viewerCount:s.filter(x=>x.origin.includes("viewer")).length,localCount:s.filter(x=>x.origin.includes("local")).length,ifcCount:s.filter(x=>x.type==="ifc").length,trbCount:s.filter(x=>x.type==="trb").length,readyCount:s.filter(x=>x.status==="ready").length,totalEntities:s.reduce((a,x)=>a+x.entityCount,0),sources:s};}}
+import { IfcGeometryProvider } from "./ifc-geometry-provider.js";
+import { TrbGeometryProvider } from "./trb-geometry-provider.js";
+
+function extension(name) {
+    return (String(name || "").split(".").pop() || "").toLowerCase();
+}
+
+function normalizedSourceKey(name) {
+    return String(name || "")
+        .replace(/\.(ifc|trb|trimbim)$/i, "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+}
+
+function modelIdentity(model) {
+    return String(
+        model?.modelId ||
+        model?.id ||
+        model?.fileId ||
+        model?.versionId ||
+        ""
+    );
+}
+
+function modelName(model) {
+    const id = modelIdentity(model);
+    return String(
+        model?.name ||
+        model?.fileName ||
+        model?.displayName ||
+        `${id}.unknown`
+    );
+}
+
+function providerHasViewer(provider) {
+    return Boolean(provider.modelId || provider.origin.includes("viewer"));
+}
+
+function providerHasLocal(provider) {
+    return Boolean(provider.file || provider.origin.includes("local"));
+}
+
+function updateOrigin(provider) {
+    const viewer = Boolean(provider.modelId);
+    const local = Boolean(provider.file);
+
+    if (viewer && local) provider.origin = "viewer+local";
+    else if (viewer) provider.origin = "viewer";
+    else if (local) provider.origin = "local";
+    else provider.origin = "detached";
+}
+
+export class GeometryRegistry {
+    constructor() {
+        this.providers = [];
+        this.counter = 1;
+    }
+
+    create(options) {
+        const fileExtension = extension(options.name);
+        const id = options.id || `source-${this.counter++}`;
+
+        if (fileExtension === "ifc") {
+            return new IfcGeometryProvider({ ...options, id });
+        }
+        if (fileExtension === "trb" || fileExtension === "trimbim") {
+            return new TrbGeometryProvider({ ...options, id });
+        }
+        return null;
+    }
+
+    findBySource(name, type) {
+        const key = normalizedSourceKey(name);
+        return this.providers.find(provider =>
+            normalizedSourceKey(provider.name) === key &&
+            provider.type === type
+        );
+    }
+
+    syncViewerModels(models) {
+        const seenProviders = new Set();
+
+        for (const model of models || []) {
+            const modelId = modelIdentity(model);
+            const name = modelName(model);
+            const fileExtension = extension(name);
+            const type = fileExtension === "trimbim" ? "trb" : fileExtension;
+
+            if (!["ifc", "trb"].includes(type)) continue;
+
+            let provider = this.providers.find(item =>
+                String(item.modelId || "") === modelId
+            );
+
+            if (!provider) {
+                provider = this.findBySource(name, type);
+            }
+
+            if (!provider) {
+                provider = this.create({
+                    id: `viewer-${modelId}`,
+                    name,
+                    origin: "viewer",
+                    modelId,
+                    modelSpec: model
+                });
+                if (provider) this.providers.push(provider);
+            }
+
+            if (!provider) continue;
+
+            provider.modelId = modelId;
+            provider.modelSpec = model;
+            provider.name = name;
+            updateOrigin(provider);
+            seenProviders.add(provider.id);
+        }
+
+        for (const provider of [...this.providers]) {
+            if (!providerHasViewer(provider)) continue;
+            if (seenProviders.has(provider.id)) continue;
+
+            provider.modelId = null;
+            provider.modelSpec = null;
+            updateOrigin(provider);
+
+            if (!provider.file) {
+                this.remove(provider.id);
+            }
+        }
+
+        this.removeDuplicateSources();
+    }
+
+    async addLocalFiles(files, onProgress) {
+        const results = [];
+
+        for (const file of Array.from(files || [])) {
+            const fileExtension = extension(file.name);
+            const type = fileExtension === "trimbim" ? "trb" : fileExtension;
+            let provider = this.findBySource(file.name, type);
+
+            if (!provider) {
+                provider = this.create({
+                    name: file.name,
+                    origin: "local",
+                    file
+                });
+                if (!provider) continue;
+                this.providers.push(provider);
+            }
+            else {
+                provider.attachFile(file);
+            }
+
+            updateOrigin(provider);
+            onProgress?.(provider, "opening");
+            await provider.open();
+            updateOrigin(provider);
+            onProgress?.(provider, provider.status);
+            results.push(provider);
+        }
+
+        this.removeDuplicateSources();
+        return results;
+    }
+
+    removeDuplicateSources() {
+        const groups = new Map();
+
+        for (const provider of this.providers) {
+            const key = `${provider.type}:${normalizedSourceKey(provider.name)}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(provider);
+        }
+
+        for (const providers of groups.values()) {
+            if (providers.length < 2) continue;
+
+            const keeper = providers.find(provider =>
+                provider.file && provider.modelId
+            ) || providers.find(provider =>
+                provider.file
+            ) || providers.find(provider =>
+                provider.modelId
+            ) || providers[0];
+
+            for (const duplicate of providers) {
+                if (duplicate === keeper) continue;
+
+                if (!keeper.file && duplicate.file) {
+                    keeper.file = duplicate.file;
+                    keeper.status = duplicate.status;
+                    keeper.entities = duplicate.entities;
+                    keeper.meshes = duplicate.meshes;
+                    keeper.metadata = duplicate.metadata;
+                    keeper.warnings = duplicate.warnings;
+                    keeper.error = duplicate.error;
+
+                    if ("globalIdIndex" in duplicate) {
+                        keeper.globalIdIndex = duplicate.globalIdIndex;
+                    }
+                    if ("meshIndex" in duplicate) {
+                        keeper.meshIndex = duplicate.meshIndex;
+                    }
+                    if ("ifcApi" in duplicate) {
+                        keeper.ifcApi = duplicate.ifcApi;
+                        keeper.ifcModelId = duplicate.ifcModelId;
+                    }
+                }
+
+                if (!keeper.modelId && duplicate.modelId) {
+                    keeper.modelId = duplicate.modelId;
+                    keeper.modelSpec = duplicate.modelSpec;
+                    keeper.name = duplicate.name;
+                }
+
+                const duplicateIndex = this.providers.indexOf(duplicate);
+                if (duplicateIndex >= 0) {
+                    this.providers.splice(duplicateIndex, 1);
+                }
+            }
+
+            updateOrigin(keeper);
+        }
+    }
+
+    remove(id) {
+        const index = this.providers.findIndex(provider => provider.id === id);
+        if (index < 0) return false;
+        this.providers[index].close();
+        this.providers.splice(index, 1);
+        return true;
+    }
+
+    clearLocal() {
+        for (const provider of [...this.providers]) {
+            if (!provider.file) continue;
+
+            if (provider.modelId) {
+                provider.close();
+                provider.file = null;
+                provider.status = "discovered";
+                provider.entities = [];
+                provider.meshes = [];
+                updateOrigin(provider);
+            }
+            else {
+                this.remove(provider.id);
+            }
+        }
+    }
+
+    summary() {
+        const sources = this.providers.map(provider => provider.getSummary());
+        return {
+            sourceCount: sources.length,
+            viewerCount: sources.filter(source =>
+                source.origin.includes("viewer")
+            ).length,
+            localCount: sources.filter(source =>
+                source.origin.includes("local")
+            ).length,
+            ifcCount: sources.filter(source => source.type === "ifc").length,
+            trbCount: sources.filter(source => source.type === "trb").length,
+            readyCount: sources.filter(source => source.status === "ready").length,
+            totalEntities: sources.reduce(
+                (sum, source) => sum + source.entityCount,
+                0
+            ),
+            sources
+        };
+    }
+}
+
+export { normalizedSourceKey };
