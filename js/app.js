@@ -1,85 +1,10 @@
 import{VERSION,BUILD_DATE,APP_NAME}from"./versions.js";import{connectTC,getAPI,setStatus}from"./tc-api.js";import{GeometryRegistry}from"./geometry/geometry-registry.js";import{renderProfileShell,renderGeometryDiagnostic}from"./svg-renderer.js";
-const R=new GeometryRegistry(),S={api:null,points:[],selected:null,station:0,frame:null,marker:null,planeIds:[]},$=id=>document.getElementById(id),markerUrl=new URL("../assets/station-marker.png",import.meta.url).href;
-function log(n,v){console.log(`===== ${n} =====`);console.dir(v);}function typeLabel(s){return s.type.toUpperCase()+" · "+s.origin+" · "+s.status;}
-function renderSources(){const box=$("geometrySourceList"),sum=R.summary();box.innerHTML="";for(const s of sum.sources){const row=document.createElement("div");row.className=`geometry-source geometry-source-${s.status}`;const a=document.createElement("div");a.className="geometry-source-main";a.textContent=s.name;const b=document.createElement("div");b.className="geometry-source-details";b.textContent=typeLabel(s)+(s.entityCount?` · ${s.entityCount} entiteter`:"");const x=document.createElement("button");x.textContent="Fjern";x.className="geometry-source-remove";x.onclick=()=>{R.remove(s.id);renderSources();};row.append(a,b,x);box.appendChild(row);}$("geometrySourceSummary").textContent=`${sum.sourceCount} kilder · ${sum.viewerCount} fra visning · ${sum.localCount} lokale · ${sum.ifcCount} IFC + ${sum.trbCount} TRB`;}
-async function discoverModels() {
-    const api = getAPI();
-    setStatus("Henter modeller som er synlige i aktiv visning...");
-
-    try {
-        const visibleObjectGroups = await api.viewer.getObjects(
-            {},
-            { visible: true }
-        );
-
-        const visibleModelIds = new Set(
-            (Array.isArray(visibleObjectGroups) ? visibleObjectGroups : [])
-                .filter(group =>
-                    group &&
-                    group.modelId &&
-                    Array.isArray(group.objects) &&
-                    group.objects.length > 0
-                )
-                .map(group => String(group.modelId))
-        );
-
-        let allModels = [];
-
-        if (typeof api.viewer.getModels === "function") {
-            allModels = await api.viewer.getModels();
-        }
-        else if (typeof api.viewer.getModelFiles === "function") {
-            allModels = await api.viewer.getModelFiles();
-        }
-
-        if (!Array.isArray(allModels)) {
-            allModels = [];
-        }
-
-        const visibleModels = allModels.filter(model => {
-            const identifiers = [
-                model.modelId,
-                model.id,
-                model.fileId,
-                model.versionId
-            ]
-                .filter(value => value !== undefined && value !== null)
-                .map(String);
-
-            return identifiers.some(identifier =>
-                visibleModelIds.has(identifier)
-            );
-        });
-
-        log("SYNLIGE OBJEKTGRUPPER", visibleObjectGroups);
-        log("MODELLER I PROSJEKT/VISNING", allModels);
-        log("MODELLER SOM ER SYNLIGE I AKTIV VISNING", visibleModels);
-
-        R.syncViewerModels(visibleModels);
-        renderSources();
-
-        const summary = R.summary();
-
-        setStatus(
-            `${summary.viewerCount} synlige IFC/TRB-modeller funnet`
-        );
-    }
-    catch (error) {
-        console.error("FEIL VED HENTING AV SYNLIGE MODELLER:", error);
-        setStatus(
-            "Kunne ikke hente synlige modeller - bruk lokale reservefiler"
-        );
-    }
-}
-
-async function localFiles(e){await R.addLocalFiles(e.target.files,()=>renderSources());renderSources();log("GEOMETRIKILDER",R.summary());e.target.value="";}
-const norm=v=>{const n=Math.hypot(v.x,v.y,v.z);return n?{x:v.x/n,y:v.y/n,z:v.z/n}:{x:0,y:0,z:0};};function stationOf(o){for(const p of o.properties||[]){const v=(p.properties||[]).find(x=>x.name==="Station");if(p.name==="Pset_Stationing"&&Number.isFinite(+v?.value))return+v.value/1000;}return Number(o.product?.name);}
-function evaluate(st){const p=S.points;if(p.length<2)return null;let a=p[0],b=p[1];for(let i=0;i<p.length-1;i++)if(st>=p[i].station&&st<=p[i+1].station){a=p[i];b=p[i+1];break;}if(st>=p.at(-1).station){a=p.at(-2);b=p.at(-1);}const r=Math.max(0,Math.min(1,(st-a.station)/(b.station-a.station))),pos={x:a.x+(b.x-a.x)*r,y:a.y+(b.y-a.y)*r,z:a.z+(b.z-a.z)*r},h=norm({x:b.x-a.x,y:b.y-a.y,z:0});return{station:st,position:pos,horizontalTangent:h,horizontalNormal:{x:-h.y,y:h.x,z:0}};}
-async function mark(f){const api=getAPI();if(S.marker)try{await api.viewer.removeIcon(S.marker);}catch{}const icon={id:930170,position:{x:f.position.x,y:f.position.y,z:f.position.z+.2},iconPath:markerUrl,size:30};await api.viewer.addIcon(icon);S.marker=icon;}
-function setStation(v){const slider=$("stationSlider"),st=Math.max(+slider.min,Math.min(+slider.max,+v));S.station=st;$("stationInput").value=st.toFixed(3);slider.value=st;$("stationLabel").textContent=st.toFixed(3);S.frame=evaluate(st);if(S.frame)mark(S.frame);}
-async function selectProfile(){try{const api=getAPI(),sel=await api.viewer.getSelection(),m=sel?.[0];if(!m)throw Error("Ingen profileringslinje valgt");const obj=(await api.viewer.getObjectProperties(m.modelId,m.objectRuntimeIds))[0];if(String(obj.class).toUpperCase()!=="IFCALIGNMENT")throw Error("Valgt objekt er ikke IFCALIGNMENT");S.selected=obj;$("profileName").value=obj.product?.name||"Ukjent";$("profileId").textContent=m.objectRuntimeIds[0];const children=await api.viewer.getHierarchyChildren(m.modelId,m.objectRuntimeIds,undefined,true),props=await api.viewer.getObjectProperties(m.modelId,children.map(x=>+x.id));S.points=props.filter(o=>o.class==="IFCREFERENT"&&o.product?.objectType==="STATION").map(o=>({station:stationOf(o),x:+o.position.x,y:+o.position.y,z:+o.position.z})).filter(p=>Object.values(p).every(Number.isFinite)).sort((a,b)=>a.station-b.station);if(S.points.length<2)throw Error("For få stasjonsreferenter");const first=S.points[0].station,last=S.points.at(-1).station;$("profileLength").textContent=(last-first).toFixed(3)+" m";$("stationSlider").min=first;$("stationSlider").max=last;$("stationInput").min=first;$("stationInput").max=last;setStation(first);setStatus("Profil valgt");}catch(e){alert(e.message);}}
-async function viewerCandidates(api,f,w){const models=await api.viewer.getObjects({});let total=0,candidates=0;for(const model of models){const ids=(model.objects||[]).map(o=>+o.id);total+=ids.length;for(let i=0;i<ids.length;i+=300){const boxes=await api.viewer.getObjectBoundingBoxes(model.modelId,ids.slice(i,i+300));for(const item of boxes||[]){const b=item.boundingBox;if(!b)continue;const vals=[];for(const x of[b.min.x,b.max.x])for(const y of[b.min.y,b.max.y])for(const z of[b.min.z,b.max.z]){const dx=x-f.position.x,dy=y-f.position.y;vals.push({o:dx*f.horizontalNormal.x+dy*f.horizontalNormal.y,l:dx*f.horizontalTangent.x+dy*f.horizontalTangent.y,z});}const mn=k=>Math.min(...vals.map(v=>v[k])),mx=k=>Math.max(...vals.map(v=>v[k]));if(mn("l")<=1&&mx("l")>=-1&&mn("o")<=w/2&&mx("o")>=-w/2&&mn("z")<=f.position.z+12&&mx("z")>=f.position.z-8)candidates++;}}}return{totalObjects:total,candidateCount:candidates};}
-async function generate(){if(!S.frame)return alert("Velg profileringslinje først");const api=getAPI(),f=S.frame,w=+$("sectionWidth").value||50;try{if(S.planeIds.length)await api.viewer.removeSectionPlanes(S.planeIds);const p=await api.viewer.addSectionPlane({positionX:f.position.x*1000,positionY:f.position.y*1000,positionZ:f.position.z*1000,directionX:-f.horizontalTangent.x,directionY:-f.horizontalTangent.y,directionZ:0,controlsVisible:true});S.planeIds=(p||[]).map(x=>+x.id).filter(Number.isFinite);renderProfileShell($("profileSvg"),{station:f.station,alignmentName:S.selected.product?.name,centerElevation:f.position.z,sectionWidth:w,version:VERSION});const view=await viewerCandidates(api,f,w),sources=R.summary();renderGeometryDiagnostic($("profileSvg"),{...view,...sources});setStatus(`Snitt ${f.station.toFixed(3)} · ${sources.viewerCount} aktive modeller · ${view.candidateCount} kandidater`);}catch(e){console.error(e);alert(e.message);}}
-function bind(){$("btnRefreshModels").onclick=discoverModels;$("geometryFiles").onchange=localFiles;$("btnClearLocal").onclick=()=>{R.clearLocal();renderSources();};$("btnSelectProfile").onclick=selectProfile;$("btnGenerate").onclick=generate;$("minus10").onclick=()=>setStation(S.station-10);$("minus1").onclick=()=>setStation(S.station-1);$("plus1").onclick=()=>setStation(S.station+1);$("plus10").onclick=()=>setStation(S.station+10);$("stationSlider").oninput=e=>setStation(e.target.value);$("stationInput").onchange=e=>setStation(e.target.value);}
-async function init(){$("versionInfo").textContent="v"+VERSION;$("buildInfo").textContent=BUILD_DATE;bind();renderSources();S.api=await connectTC();setStatus("Trimble API koblet");await discoverModels();window.addEventListener("tc-workspace-event",e=>{if(/model|view/i.test(String(e.detail?.event)))discoverModels();});console.log(APP_NAME,VERSION);}
-init();
+const R=new GeometryRegistry(),S={points:[],selected:null,station:0,frame:null,marker:null,planeIds:[]},$=id=>document.getElementById(id),markerUrl=new URL("../assets/station-marker.png",import.meta.url).href,refresh={timer:null,inProgress:false,pending:false,lastSignature:null,retried:false};
+const DEBOUNCE_MS=500;function log(n,v){console.log(`===== ${n} =====`);console.dir(v);}function renderSources(){const box=$("geometrySourceList"),sum=R.summary();box.innerHTML="";for(const s of sum.sources){const row=document.createElement("div");row.className=`geometry-source geometry-source-${s.status}`;row.innerHTML=`<div class="geometry-source-main"></div><div class="geometry-source-details"></div>`;row.children[0].textContent=s.name;row.children[1].textContent=`${s.type.toUpperCase()} · ${s.origin} · ${s.status}`;const b=document.createElement("button");b.className="geometry-source-remove";b.textContent="Fjern";b.onclick=()=>{R.remove(s.id);renderSources();};row.appendChild(b);box.appendChild(row);}$("geometrySourceSummary").textContent=`${sum.sourceCount} kilder · ${sum.viewerCount} fra visning · ${sum.localCount} lokale · ${sum.ifcCount} IFC + ${sum.trbCount} TRB`;}
+function eventName(d){const e=d?.event;return typeof e==="string"?e:String(e?.type||e?.name||e?.event||e?.action||"");}function relevant(d){if(d?.data?.origin?.isSelf||d?.origin?.isSelf)return false;return["modelstatechanged","modelreset"].includes(eventName(d).replace(/[^a-z0-9]/gi,"").toLowerCase());}function schedule(reason){clearTimeout(refresh.timer);refresh.timer=setTimeout(()=>{refresh.timer=null;discover({reason});},DEBOUNCE_MS);}function signature(models,ids){return[...Array.from(ids).map(x=>`v:${x}`),...models.map(m=>`${m.modelId||m.id||m.fileId||m.versionId}:${m.name||m.fileName||m.displayName||""}`)].sort().join("|");}
+async function discover({reason="manual",force=false}={}){const api=getAPI();if(!api?.viewer)return;if(refresh.inProgress){refresh.pending=true;return;}refresh.inProgress=true;refresh.pending=false;try{if(reason==="manual"||reason==="startup")setStatus("Henter synlige modeller...");const groups=await api.viewer.getObjects({}, {visible:true}),ids=new Set((groups||[]).filter(g=>g.modelId&&g.objects?.length).map(g=>String(g.modelId)));let all=typeof api.viewer.getModels==="function"?await api.viewer.getModels():typeof api.viewer.getModelFiles==="function"?await api.viewer.getModelFiles():[];if(!Array.isArray(all))all=[];const models=all.filter(m=>[m.modelId,m.id,m.fileId,m.versionId].filter(x=>x!=null).map(String).some(x=>ids.has(x))),sig=signature(models,ids);if(!force&&sig===refresh.lastSignature)return;refresh.lastSignature=sig;R.syncViewerModels(models);renderSources();const sum=R.summary();log("SYNLIGE MODELLER - OPPDATERT",{reason,visibleObjectGroupCount:ids.size,visibleModelCount:models.length,models:models.map(m=>({id:m.modelId||m.id||m.fileId||m.versionId,name:m.name||m.fileName||m.displayName}))});setStatus(`${sum.viewerCount} synlige IFC/TRB-modeller funnet`);if(reason==="startup"&&ids.size&&models.length===0&&!refresh.retried){refresh.retried=true;setTimeout(()=>discover({reason:"startup-retry",force:true}),1200);}}catch(e){console.error("FEIL VED MODELLHENTING",e);if(reason==="manual"||reason==="startup")setStatus("Kunne ikke hente synlige modeller");}finally{refresh.inProgress=false;if(refresh.pending){refresh.pending=false;schedule("pending");}}}
+async function localFiles(e){await R.addLocalFiles(e.target.files,renderSources);renderSources();e.target.value="";}const norm=v=>{const n=Math.hypot(v.x,v.y,v.z);return n?{x:v.x/n,y:v.y/n,z:v.z/n}:{x:0,y:0,z:0};};function stationOf(o){for(const p of o.properties||[]){const v=(p.properties||[]).find(x=>x.name==="Station");if(p.name==="Pset_Stationing"&&Number.isFinite(+v?.value))return+v.value/1000;}return Number(o.product?.name);}function evaluate(st){const p=S.points;if(p.length<2)return null;let a=p[0],b=p[1];for(let i=0;i<p.length-1;i++)if(st>=p[i].station&&st<=p[i+1].station){a=p[i];b=p[i+1];break;}if(st>=p.at(-1).station){a=p.at(-2);b=p.at(-1);}const r=Math.max(0,Math.min(1,(st-a.station)/(b.station-a.station))),position={x:a.x+(b.x-a.x)*r,y:a.y+(b.y-a.y)*r,z:a.z+(b.z-a.z)*r},h=norm({x:b.x-a.x,y:b.y-a.y,z:0});return{station:st,position,horizontalTangent:h,horizontalNormal:{x:-h.y,y:h.x,z:0}};}async function mark(f){const api=getAPI();if(S.marker)try{await api.viewer.removeIcon(S.marker);}catch{}const icon={id:930170,position:{x:f.position.x,y:f.position.y,z:f.position.z+.2},iconPath:markerUrl,size:30};await api.viewer.addIcon(icon);S.marker=icon;}function setStation(v){const sl=$("stationSlider"),st=Math.max(+sl.min,Math.min(+sl.max,+v));S.station=st;$("stationInput").value=st.toFixed(3);sl.value=st;$("stationLabel").textContent=st.toFixed(3);S.frame=evaluate(st);if(S.frame)mark(S.frame);}
+async function selectProfile(){try{const api=getAPI(),m=(await api.viewer.getSelection())?.[0];if(!m)throw Error("Ingen profileringslinje valgt");const obj=(await api.viewer.getObjectProperties(m.modelId,m.objectRuntimeIds))[0];if(String(obj.class).toUpperCase()!=="IFCALIGNMENT")throw Error("Valgt objekt er ikke IFCALIGNMENT");S.selected=obj;$("profileName").value=obj.product?.name||"Ukjent";$("profileId").textContent=m.objectRuntimeIds[0];const children=await api.viewer.getHierarchyChildren(m.modelId,m.objectRuntimeIds,undefined,true),props=await api.viewer.getObjectProperties(m.modelId,children.map(x=>+x.id));S.points=props.filter(o=>o.class==="IFCREFERENT"&&o.product?.objectType==="STATION").map(o=>({station:stationOf(o),x:+o.position.x,y:+o.position.y,z:+o.position.z})).filter(p=>Object.values(p).every(Number.isFinite)).sort((a,b)=>a.station-b.station);const first=S.points[0].station,last=S.points.at(-1).station;$("profileLength").textContent=(last-first).toFixed(3)+" m";$("stationSlider").min=first;$("stationSlider").max=last;$("stationInput").min=first;$("stationInput").max=last;setStation(first);setStatus("Profil valgt");}catch(e){alert(e.message);}}
+async function candidates(api,f,w){const groups=await api.viewer.getObjects({}, {visible:true});let total=0,count=0;for(const g of groups){const ids=(g.objects||[]).map(o=>+o.id);total+=ids.length;for(let i=0;i<ids.length;i+=300){for(const item of await api.viewer.getObjectBoundingBoxes(g.modelId,ids.slice(i,i+300))||[]){const b=item.boundingBox;if(!b)continue,vals=[];for(const x of[b.min.x,b.max.x])for(const y of[b.min.y,b.max.y])for(const z of[b.min.z,b.max.z]){const dx=x-f.position.x,dy=y-f.position.y;vals.push({o:dx*f.horizontalNormal.x+dy*f.horizontalNormal.y,l:dx*f.horizontalTangent.x+dy*f.horizontalTangent.y,z});}const mn=k=>Math.min(...vals.map(v=>v[k])),mx=k=>Math.max(...vals.map(v=>v[k]));if(mn("l")<=1&&mx("l")>=-1&&mn("o")<=w/2&&mx("o")>=-w/2&&mn("z")<=f.position.z+12&&mx("z")>=f.position.z-8)count++;}}}return{totalObjects:total,candidateCount:count};}
+async function generate(){if(!S.frame)return alert("Velg profileringslinje først");const api=getAPI(),f=S.frame,w=+$("sectionWidth").value||50;if(S.planeIds.length)await api.viewer.removeSectionPlanes(S.planeIds);const p=await api.viewer.addSectionPlane({positionX:f.position.x*1000,positionY:f.position.y*1000,positionZ:f.position.z*1000,directionX:-f.horizontalTangent.x,directionY:-f.horizontalTangent.y,directionZ:0,controlsVisible:true});S.planeIds=(p||[]).map(x=>+x.id).filter(Number.isFinite);renderProfileShell($("profileSvg"),{station:f.station,alignmentName:S.selected.product?.name,centerElevation:f.position.z,sectionWidth:w,version:VERSION});renderGeometryDiagnostic($("profileSvg"),{...await candidates(api,f,w),...R.summary()});}
+function bind(){$("btnRefreshModels").onclick=()=>discover({reason:"manual",force:true});$("geometryFiles").onchange=localFiles;$("btnClearLocal").onclick=()=>{R.clearLocal();renderSources();};$("btnSelectProfile").onclick=selectProfile;$("btnGenerate").onclick=generate;$("minus10").onclick=()=>setStation(S.station-10);$("minus1").onclick=()=>setStation(S.station-1);$("plus1").onclick=()=>setStation(S.station+1);$("plus10").onclick=()=>setStation(S.station+10);$("stationSlider").oninput=e=>setStation(e.target.value);$("stationInput").onchange=e=>setStation(e.target.value);}async function init(){$("versionInfo").textContent="v"+VERSION;$("buildInfo").textContent=BUILD_DATE;bind();renderSources();await connectTC();await discover({reason:"startup",force:true});window.addEventListener("tc-workspace-event",e=>{if(relevant(e.detail))schedule(eventName(e.detail));});console.log(APP_NAME,VERSION);}init();
