@@ -350,6 +350,109 @@ async function getCandidateProperties(api, candidates) {
     return result;
 }
 
+const GEOMETRY_FIELD_PATTERN = /(?:geometry|geometries|representation|representations|mesh|vertex|vertices|triangle|triangles|face|faces|index|indices|point|points|coordinate|coordinates|position|positions|transform|matrix|curve|surface|solid|shape|primitive|normal|normals|buffer|buffers)/i;
+
+function valueType(value) {
+    if (value === null) return "null";
+    if (ArrayBuffer.isView(value)) return value.constructor.name;
+    if (Array.isArray(value)) return "Array";
+    return typeof value === "object"
+        ? value.constructor?.name || "Object"
+        : typeof value;
+}
+
+function compactValue(value) {
+    if (value === null || value === undefined) return value;
+    if (typeof value === "string") {
+        return value.length > 160 ? value.slice(0, 157) + "..." : value;
+    }
+    if (["number", "boolean"].includes(typeof value)) return value;
+    if (ArrayBuffer.isView(value)) {
+        return {
+            type: value.constructor.name,
+            length: value.length,
+            sample: Array.from(value.slice(0, 16))
+        };
+    }
+    if (Array.isArray(value)) {
+        return {
+            type: "Array",
+            length: value.length,
+            sample: value.slice(0, 8).map(item =>
+                typeof item === "object" && item !== null
+                    ? { type: valueType(item), keys: Object.keys(item).slice(0, 12) }
+                    : item)
+        };
+    }
+    if (typeof value === "object") {
+        return {
+            type: valueType(value),
+            keys: Object.keys(value).slice(0, 30)
+        };
+    }
+    return String(value);
+}
+
+function scanGeometryFields(root, options = {}) {
+    const maxDepth = options.maxDepth ?? 10;
+    const maxHits = options.maxHits ?? 300;
+    const hits = [];
+    const visited = new WeakSet();
+
+    function visit(value, path, depth) {
+        if (hits.length >= maxHits || depth > maxDepth || value === null || value === undefined) return;
+        if (typeof value !== "object") return;
+        if (visited.has(value)) return;
+        visited.add(value);
+
+        const entries = Array.isArray(value)
+            ? value.slice(0, 250).map((item, index) => [String(index), item])
+            : Object.entries(value);
+
+        for (const [key, child] of entries) {
+            if (hits.length >= maxHits) break;
+            const childPath = Array.isArray(value)
+                ? `${path}[${key}]`
+                : path ? `${path}.${key}` : key;
+
+            if (GEOMETRY_FIELD_PATTERN.test(key)) {
+                hits.push({
+                    path: childPath,
+                    field: key,
+                    type: valueType(child),
+                    summary: compactValue(child)
+                });
+            }
+
+            visit(child, childPath, depth + 1);
+        }
+    }
+
+    visit(root, "response", 0);
+    return hits;
+}
+
+function summarizeEntityResponse(response) {
+    const models = Array.isArray(response) ? response : [];
+    return models.map(model => {
+        const entities = Array.isArray(model.entityForModel)
+            ? model.entityForModel
+            : [];
+        const classes = {};
+        for (const entity of entities) {
+            const className = entity?.class || "Ukjent";
+            classes[className] = (classes[className] || 0) + 1;
+        }
+        return {
+            modelId: model.modelId || "",
+            versionId: model.versionId || "",
+            entityCount: entities.length,
+            classCount: Object.keys(classes).length,
+            classes
+        };
+    });
+}
+
 async function runGeometryDiagnostic(api, frame, sectionWidth) {
     const diagnostic = {
         station: frame.station,
@@ -366,9 +469,15 @@ async function runGeometryDiagnostic(api, frame, sectionWidth) {
         candidateCount: 0,
         candidates: [],
         candidateProperties: [],
-        getEntitiesDiagnostic: null,
-        presentation: null,
-        sectionPlanes: null,
+        entityResponseSummary: [],
+        geometryFieldHits: [],
+        geometryFieldHitCount: 0,
+        geometryFieldScanTruncated: false,
+        getEntitiesDiagnostic: {
+            available: typeof api.viewer.getEntities === "function",
+            attempted: false,
+            error: null
+        },
         warnings: []
     };
 
@@ -379,15 +488,6 @@ async function runGeometryDiagnostic(api, frame, sectionWidth) {
         const inspected = allObjects.slice(0, 15000);
         diagnostic.inspectedObjects = inspected.length;
         if (allObjects.length > inspected.length) diagnostic.warnings.push("Begrenset til 15000 objekter.");
-
-        if (typeof api.viewer.getPresentation === "function") {
-            try { diagnostic.presentation = await api.viewer.getPresentation(); }
-            catch (error) { diagnostic.warnings.push("getPresentation feilet: " + error.message); }
-        }
-        if (typeof api.viewer.getSectionPlanes === "function") {
-            try { diagnostic.sectionPlanes = await api.viewer.getSectionPlanes(); }
-            catch (error) { diagnostic.warnings.push("getSectionPlanes feilet: " + error.message); }
-        }
 
         const boxes = await getBoundingBoxes(api, inspected, frame, diagnostic.warnings);
         diagnostic.boundingBoxes = boxes.length;
@@ -405,22 +505,21 @@ async function runGeometryDiagnostic(api, frame, sectionWidth) {
         diagnostic.candidateCount = diagnostic.candidates.length;
         diagnostic.candidateProperties = await getCandidateProperties(api, diagnostic.candidates);
 
-        const entityTest = {
-            available: typeof api.viewer.getEntities === "function",
-            functionArity: typeof api.viewer.getEntities === "function" ? api.viewer.getEntities.length : null,
-            attempted: false,
-            response: null,
-            error: null
-        };
-        if (entityTest.available && diagnostic.candidates.length) {
-            const sample = diagnostic.candidates.slice(0, 5);
-            const modelId = sample[0].modelId;
-            const ids = sample.filter(item => item.modelId === modelId).map(item => item.runtimeId);
-            entityTest.attempted = true;
-            try { entityTest.response = await api.viewer.getEntities(modelId, ids); }
-            catch (error) { entityTest.error = error.message || String(error); }
+        if (diagnostic.getEntitiesDiagnostic.available) {
+            diagnostic.getEntitiesDiagnostic.attempted = true;
+            try {
+                const entityResponse = await api.viewer.getEntities();
+                diagnostic.entityResponseSummary = summarizeEntityResponse(entityResponse);
+                diagnostic.geometryFieldHits = scanGeometryFields(entityResponse, {
+                    maxDepth: 12,
+                    maxHits: 300
+                });
+                diagnostic.geometryFieldHitCount = diagnostic.geometryFieldHits.length;
+                diagnostic.geometryFieldScanTruncated = diagnostic.geometryFieldHits.length >= 300;
+            } catch (error) {
+                diagnostic.getEntitiesDiagnostic.error = error.message || String(error);
+            }
         }
-        diagnostic.getEntitiesDiagnostic = entityTest;
     } catch (error) {
         diagnostic.warnings.push(error.message || String(error));
     }
@@ -465,13 +564,24 @@ async function generateProfile() {
         setStatus("Kjører geometridiagnose...");
         state.geometryDiagnostic = await runGeometryDiagnostic(api, frame, sectionWidth);
         renderGeometryDiagnostic(profileSvg, state.geometryDiagnostic);
-        logResult("GEOMETRIDIAGNOSE", state.geometryDiagnostic);
-        logResult("VIEWER-METODER FOR GEOMETRI", state.geometryDiagnostic.viewerMethods);
-        logResult("BOUNDING-BOX-KANDIDATER", state.geometryDiagnostic.candidates);
-        logResult("GETENTITIES-DIAGNOSE", state.geometryDiagnostic.getEntitiesDiagnostic);
-        logResult("VIEW-PRESENTATION", state.geometryDiagnostic.presentation);
-        logResult("AKTIVE SNITTPLAN", state.geometryDiagnostic.sectionPlanes);
-        console.table(state.geometryDiagnostic.candidates.slice(0, 50));
+        logResult("GEOMETRIDIAGNOSE - OPPSUMMERING", {
+            station: state.geometryDiagnostic.station,
+            totalObjects: state.geometryDiagnostic.totalObjects,
+            inspectedObjects: state.geometryDiagnostic.inspectedObjects,
+            boundingBoxes: state.geometryDiagnostic.boundingBoxes,
+            boundingBoxCandidates: state.geometryDiagnostic.boundingBoxCandidateCount,
+            geometryFieldHits: state.geometryDiagnostic.geometryFieldHitCount,
+            scanTruncated: state.geometryDiagnostic.geometryFieldScanTruncated,
+            warnings: state.geometryDiagnostic.warnings
+        });
+        logResult("ENTITY-RESPONS - KOMPAKT", state.geometryDiagnostic.entityResponseSummary);
+        logResult("GEOMETRI- OG REPRESENTASJONSFELTER", state.geometryDiagnostic.geometryFieldHits);
+        console.table(state.geometryDiagnostic.geometryFieldHits.map(hit => ({
+            path: hit.path,
+            field: hit.field,
+            type: hit.type,
+            summary: JSON.stringify(hit.summary)
+        })));
         console.table(state.geometryDiagnostic.candidateProperties.slice(0, 50));
         setStatus("Snitt ved stasjon " + frame.station.toFixed(3) + " - " +
             state.geometryDiagnostic.candidateCount + " bounding-box-kandidater");

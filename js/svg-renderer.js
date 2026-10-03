@@ -96,7 +96,7 @@ export function renderProfileShell(svg, data) {
         `${data.alignmentName || "Profileringslinje"} | Referansekote ${centerElevation.toFixed(3)} m | Snittbredde ${sectionWidth.toFixed(1)} m`,
         { size: 13, fill: "#475569" });
     text(labels, margin.left + plotWidth, margin.top - 18,
-        `SVG-skall v${data.version || "0.4.3"} - bounding-box-diagnose aktiv`,
+        `SVG-skall v${data.version || "0.4.3"} - kompakt geometridiagnose aktiv`,
         { anchor: "end", size: 12, fill: "#64748b" });
     text(labels, margin.left + plotWidth / 2, height - 28, "Offset fra referanselinje (m)", {
         anchor: "middle", size: 14, weight: 600
@@ -125,7 +125,7 @@ export function renderGeometryDiagnostic(svg, diagnostic) {
         "Bounding boxes: " + diagnostic.boundingBoxes,
         "Bounding-box-kandidater: " + diagnostic.boundingBoxCandidateCount,
         "Valgte kandidater: " + diagnostic.candidateCount,
-        "getEntities tilgjengelig: " + (diagnostic.getEntitiesDiagnostic?.available ? "ja" : "nei"),
+        "Geometri-/representasjonsfelt: " + diagnostic.geometryFieldHitCount,
         "Langsgående toleranse: ±" + Number(diagnostic.longitudinalTolerance).toFixed(2) + " m"
     ];
     rows.forEach((row, index) => text(layer, x + 16, y + 53 + index * 18, row, { size: 12 }));
