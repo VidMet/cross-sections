@@ -1,4 +1,4 @@
-import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.5.4f";
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.5.4g";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
 import { GeometryRegistry } from "./geometry/geometry-registry.js";
 import {
@@ -8,9 +8,9 @@ import {
 } from "./svg-renderer.js";
 import {
     intersectMeshes
-} from "./geometry/section-engine.js?v=0.5.4f";
+} from "./geometry/section-engine.js?v=0.5.4g";
 
-const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4e+cache-bust-0.5.4f";
+const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4g-locked-per-model";
 
 const R = new GeometryRegistry();
 const S = { points: [], selected: null, station: 0, frame: null, marker: null, planeIds: [] };
@@ -324,7 +324,7 @@ async function init() {
     bind();
     renderSources();
     console.log("===== MODULVERSJONER =====");
-    console.dir({ applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.5.4f" });
+    console.dir({ applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.5.4g" });
     await connectTC();
     await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
