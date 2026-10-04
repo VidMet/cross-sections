@@ -1,50 +1,5 @@
-﻿import { GeometryProvider } from "./geometry-provider.js";
+import { GeometryProvider } from "./geometry-provider.js";
 import { normalizeIfcGeometry } from "./mesh-normalizer.js";
-export const IFC_GEOMETRY_PROVIDER_VERSION = "0.6.0d-ifc-signature-diagnostic";
-const IFC_SIGNATURE_SAMPLE_BYTES = 4096;
-
-function byteHex(bytes, maximum = 32) {
-    return Array.from(bytes.slice(0, maximum))
-        .map(value => value.toString(16).padStart(2, "0"))
-        .join(" ");
-}
-
-function printablePreview(bytes, maximum = 160) {
-    return Array.from(bytes.slice(0, maximum))
-        .map(value => value >= 32 && value <= 126 ? String.fromCharCode(value) : ".")
-        .join("");
-}
-
-function inspectIfcSignature(data, file) {
-    const sample = data.slice(0, Math.min(data.length, IFC_SIGNATURE_SAMPLE_BYTES));
-    let text = "";
-    try { text = new TextDecoder("utf-8", { fatal: false }).decode(sample); }
-    catch { text = ""; }
-    const normalized = text.replace(/^\uFEFF/, "").trimStart();
-    const compact = normalized.slice(0, 512).toUpperCase();
-    const hasStepStart = compact.startsWith("ISO-10303-21;");
-    const hasHeader = /ISO-10303-21;[\s\S]{0,256}HEADER\s*;/i.test(normalized);
-    const hasData = /\bDATA\s*;/i.test(text);
-    const looksLikeZip = sample.length >= 4 && sample[0] === 0x50 && sample[1] === 0x4b && [0x03,0x05,0x07].includes(sample[2]);
-    const nullBytes = Array.from(sample).filter(value => value === 0).length;
-    const highBytes = Array.from(sample).filter(value => value > 127).length;
-    return {
-        fileName: file?.name || "",
-        fileSize: data.length,
-        mimeType: file?.type || "",
-        sampleSize: sample.length,
-        hasStepStart,
-        hasHeader,
-        hasData,
-        looksLikeZip,
-        nullByteCount: nullBytes,
-        highByteCount: highBytes,
-        firstBytesHex: byteHex(sample),
-        printablePreview: printablePreview(sample),
-        decodedPreview: text.slice(0, 300),
-        validIfcStepSignature: hasStepStart && hasHeader
-    };
-}
 
 const WEB_IFC_VERSION = "0.0.78";
 const WEB_IFC_MODULE = `https://cdn.jsdelivr.net/npm/web-ifc@${WEB_IFC_VERSION}/web-ifc-api.js`;
@@ -95,18 +50,6 @@ export class IfcGeometryProvider extends GeometryProvider {
         try {
             this.ifcApi = await getIfcApi();
             const data = new Uint8Array(await this.file.arrayBuffer());
-            const signature = inspectIfcSignature(data, this.file);
-            console.log("===== IFC-SIGNATURDIAGNOSE v0.6.0d =====");
-            console.dir({ sourceId: this.id, origin: this.origin, ...signature });
-            this.metadata = { ...(this.metadata || {}), signature, providerVersion: IFC_GEOMETRY_PROVIDER_VERSION };
-            if (!signature.validIfcStepSignature) {
-                this.status = "invalid-ifc-signature";
-                this.error = signature.looksLikeZip
-                    ? "Filen starter som ZIP/komprimert innhold, ikke klartekst IFC STEP."
-                    : "Filen mangler IFC STEP-signaturen ISO-10303-21; og HEADER;.";
-                console.warn("IFC-SIGNATUR AVVIST:", { sourceId: this.id, fileName: this.file?.name || "", error: this.error, signature });
-                return this.getSummary();
-            }
             this.ifcModelId = this.ifcApi.OpenModel(data, {
                 COORDINATE_TO_ORIGIN: false,
                 USE_FAST_BOOLS: true

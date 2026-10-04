@@ -1,8 +1,8 @@
-﻿import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.0d";
+﻿import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.0c";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
-import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.0d";
-import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.0d";
-import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.0d";
+import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.0c";
+import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.0c";
+import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.0c";
 
 const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4i-mirrored-offset";
 const R = new GeometryRegistry();
@@ -251,7 +251,7 @@ async function init() {
     $("buildInfo").textContent = BUILD_DATE;
     bind(); renderSources();
     console.log("===== MODULVERSJONER =====");
-    console.dir({ applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.0d" });
+    console.dir({ applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.0c" });
     await connectTC();
     await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
