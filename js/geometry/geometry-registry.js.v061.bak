@@ -1,33 +1,6 @@
-﻿import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.1";
-import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.1";
-import { getAPI } from "../tc-api.js?v=0.6.1";
-export const GEOMETRY_REGISTRY_VERSION = "0.6.1-content-routing";
-const ROUTING_SAMPLE_BYTES = 4096;
-
-async function inspectLoadedContent(file) {
-    const sample = new Uint8Array(await file.slice(0, ROUTING_SAMPLE_BYTES).arrayBuffer());
-    let text = "";
-    try { text = new TextDecoder("utf-8", { fatal: false }).decode(sample); } catch { text = ""; }
-    const normalized = text.replace(/^\uFEFF/, "").trimStart();
-    const ascii = Array.from(sample, value => value >= 32 && value <= 126 ? String.fromCharCode(value) : ".").join("");
-    const validIfcStep = normalized.toUpperCase().startsWith("ISO-10303-21;") && /HEADER\s*;/i.test(normalized.slice(0, 1024));
-    const trimBimIdentifier = ascii.match(/TRB\d/i)?.[0]?.toUpperCase() || null;
-    const looksLikeTrimBim = Boolean(trimBimIdentifier || /TrimBimConverter/i.test(ascii));
-    return {
-        validIfcStep,
-        looksLikeTrimBim,
-        trimBimIdentifier,
-        firstBytesHex: Array.from(sample.slice(0, 32)).map(value => value.toString(16).padStart(2, "0")).join(" "),
-        printablePreview: ascii.slice(0, 200)
-    };
-}
-
-function trbFileName(name) {
-    const value = String(name || "model");
-    return /\.(ifc|trb|trimbim)$/i.test(value)
-        ? value.replace(/\.(ifc|trb|trimbim)$/i, ".trb")
-        : `${value}.trb`;
-}
+import { IfcGeometryProvider } from "./ifc-geometry-provider.js";
+import { TrbGeometryProvider } from "./trb-geometry-provider.js";
+import { getAPI } from "../tc-api.js";
 
 function extension(name) {
     return (String(name || "").split(".").pop() || "").toLowerCase();
@@ -277,7 +250,7 @@ export class GeometryRegistry {
             for (const model of models) {
                 const modelId = modelIdentity(model);
                 const name = modelName(model);
-                let provider = this.providers.find(item =>
+                const provider = this.providers.find(item =>
                     String(item.modelId || "") === modelId
                 );
 
@@ -320,59 +293,10 @@ export class GeometryRegistry {
                         continue;
                     }
 
-                    const content = await inspectLoadedContent(file);
-                    let routedType = provider.type;
-                    let routedFile = file;
-
-                    if (content.looksLikeTrimBim) {
-                        routedType = "trb";
-                        routedFile = new File(
-                            [file],
-                            trbFileName(file.name),
-                            { type: "application/octet-stream", lastModified: Date.now() }
-                        );
-                    }
-                    else if (content.validIfcStep) {
-                        routedType = "ifc";
-                    }
-
-                    if (provider.type !== routedType) {
-                        const providerIndex = this.providers.indexOf(provider);
-                        const previous = provider;
-                        const routed = this.create({
-                            id: previous.id,
-                            name: routedFile.name,
-                            origin: previous.origin,
-                            modelId: previous.modelId,
-                            modelSpec: previous.modelSpec,
-                            file: routedFile
-                        });
-                        if (!routed) throw new Error(`Ingen provider for innholdstype ${routedType}`);
-                        routed.fileOrigin = "viewer-loaded-model";
-                        routed.viewerSourceName = file.name;
-                        routed.contentRouting = content;
-                        if (providerIndex >= 0) this.providers.splice(providerIndex, 1, routed);
-                        provider = routed;
-                    }
-                    else {
-                        provider.attachFile(routedFile);
-                    }
-
-                    provider.name = routedFile.name;
-                    provider.fileOrigin = "viewer-loaded-model";
-                    provider.contentRouting = content;
+                    provider.attachFile(file);
+                    provider.fileOrigin =
+                        "viewer-loaded-model";
                     updateOrigin(provider);
-
-                    console.log("===== INNHOLDSBASERT PROVIDER-RUTING v0.6.1 =====");
-                    console.dir({
-                        modelId,
-                        viewerFileName: file.name,
-                        routedFileName: routedFile.name,
-                        originalProviderType: content.looksLikeTrimBim ? "ifc-by-name" : provider.type,
-                        routedProviderType: provider.type,
-                        ...content
-                    });
-
                     await provider.open();
                     updateOrigin(provider);
 
@@ -427,7 +351,7 @@ export class GeometryRegistry {
 
     logHydration(result) {
         console.log(
-            "===== AUTOMATISK MODELLFIL v0.6.1 ====="
+            "===== AUTOMATISK MODELLFIL v0.6.0 ====="
         );
         console.dir(result);
     }
