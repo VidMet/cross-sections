@@ -1,5 +1,6 @@
 import { IfcGeometryProvider } from "./ifc-geometry-provider.js";
 import { TrbGeometryProvider } from "./trb-geometry-provider.js";
+import { getAPI } from "../tc-api.js";
 
 function extension(name) {
     return (String(name || "").split(".").pop() || "").toLowerCase();
@@ -35,44 +36,119 @@ function modelName(model) {
 }
 
 function providerHasViewer(provider) {
-    return Boolean(provider.modelId || provider.origin.includes("viewer"));
-}
-
-function providerHasLocal(provider) {
-    return Boolean(provider.file || provider.origin.includes("local"));
+    return Boolean(
+        provider.modelId ||
+        provider.origin.includes("viewer")
+    );
 }
 
 function updateOrigin(provider) {
     const viewer = Boolean(provider.modelId);
-    const local = Boolean(provider.file);
+    const file = Boolean(provider.file);
+    const automatic = provider.fileOrigin === "viewer-loaded-model";
 
-    if (viewer && local) provider.origin = "viewer+local";
-    else if (viewer) provider.origin = "viewer";
-    else if (local) provider.origin = "local";
-    else provider.origin = "detached";
+    if (viewer && file && automatic) {
+        provider.origin = "viewer+automatic";
+    }
+    else if (viewer && file) {
+        provider.origin = "viewer+local";
+    }
+    else if (viewer) {
+        provider.origin = "viewer";
+    }
+    else if (file && automatic) {
+        provider.origin = "automatic";
+    }
+    else if (file) {
+        provider.origin = "local";
+    }
+    else {
+        provider.origin = "detached";
+    }
+}
+
+function base64ToBlob(value) {
+    const clean = String(value || "")
+        .replace(/^data:[^;]+;base64,/, "");
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+
+    return new Blob(
+        [bytes],
+        { type: "application/octet-stream" }
+    );
+}
+
+function loadedModelFile(loaded, fallbackName) {
+    const name = String(
+        loaded?.name ||
+        loaded?.file?.name ||
+        fallbackName ||
+        "model.ifc"
+    );
+
+    let blob = loaded?.blob;
+
+    if (typeof blob === "string") {
+        blob = base64ToBlob(blob);
+    }
+
+    if (!(blob instanceof Blob)) {
+        return null;
+    }
+
+    return new File(
+        [blob],
+        name,
+        {
+            type:
+                blob.type ||
+                "application/octet-stream",
+            lastModified: Date.now()
+        }
+    );
 }
 
 export class GeometryRegistry {
     constructor() {
         this.providers = [];
         this.counter = 1;
+        this.hydratingModelIds = new Set();
+        this.hydrationGeneration = 0;
     }
 
     create(options) {
         const fileExtension = extension(options.name);
-        const id = options.id || `source-${this.counter++}`;
+        const id = options.id ||
+            `source-${this.counter++}`;
 
         if (fileExtension === "ifc") {
-            return new IfcGeometryProvider({ ...options, id });
+            return new IfcGeometryProvider({
+                ...options,
+                id
+            });
         }
-        if (fileExtension === "trb" || fileExtension === "trimbim") {
-            return new TrbGeometryProvider({ ...options, id });
+
+        if (
+            fileExtension === "trb" ||
+            fileExtension === "trimbim"
+        ) {
+            return new TrbGeometryProvider({
+                ...options,
+                id
+            });
         }
+
         return null;
     }
 
     findBySource(name, type) {
         const key = normalizedSourceKey(name);
+
         return this.providers.find(provider =>
             normalizedSourceKey(provider.name) === key &&
             provider.type === type
@@ -86,9 +162,13 @@ export class GeometryRegistry {
             const modelId = modelIdentity(model);
             const name = modelName(model);
             const fileExtension = extension(name);
-            const type = fileExtension === "trimbim" ? "trb" : fileExtension;
+            const type = fileExtension === "trimbim"
+                ? "trb"
+                : fileExtension;
 
-            if (!["ifc", "trb"].includes(type)) continue;
+            if (!["ifc", "trb"].includes(type)) {
+                continue;
+            }
 
             let provider = this.providers.find(item =>
                 String(item.modelId || "") === modelId
@@ -106,7 +186,10 @@ export class GeometryRegistry {
                     modelId,
                     modelSpec: model
                 });
-                if (provider) this.providers.push(provider);
+
+                if (provider) {
+                    this.providers.push(provider);
+                }
             }
 
             if (!provider) continue;
@@ -132,6 +215,145 @@ export class GeometryRegistry {
         }
 
         this.removeDuplicateSources();
+        this.queueLoadedModelHydration(models || []);
+    }
+
+    queueLoadedModelHydration(models) {
+        const generation = ++this.hydrationGeneration;
+
+        Promise.resolve().then(async () => {
+            const api = getAPI();
+            const result = {
+                generation,
+                requested: 0,
+                ready: 0,
+                skipped: 0,
+                missingBlob: 0,
+                failed: 0,
+                models: []
+            };
+
+            if (
+                typeof api?.viewer?.getLoadedModel !==
+                "function"
+            ) {
+                result.failed = models.length;
+                result.models.push({
+                    status: "unsupported-api",
+                    message:
+                        "viewer.getLoadedModel er ikke tilgjengelig"
+                });
+                this.logHydration(result);
+                return;
+            }
+
+            for (const model of models) {
+                const modelId = modelIdentity(model);
+                const name = modelName(model);
+                const provider = this.providers.find(item =>
+                    String(item.modelId || "") === modelId
+                );
+
+                if (!provider) continue;
+
+                if (
+                    provider.status === "ready" &&
+                    provider.file
+                ) {
+                    result.skipped += 1;
+                    continue;
+                }
+
+                if (this.hydratingModelIds.has(modelId)) {
+                    result.skipped += 1;
+                    continue;
+                }
+
+                result.requested += 1;
+                this.hydratingModelIds.add(modelId);
+                provider.status = "loading-viewer-file";
+
+                try {
+                    const loaded =
+                        await api.viewer.getLoadedModel(modelId);
+                    const file = loadedModelFile(
+                        loaded,
+                        name
+                    );
+
+                    if (!file) {
+                        provider.status = "discovered";
+                        result.missingBlob += 1;
+                        result.models.push({
+                            modelId,
+                            name,
+                            status: "missing-blob",
+                            loadedModel: loaded
+                        });
+                        continue;
+                    }
+
+                    provider.attachFile(file);
+                    provider.fileOrigin =
+                        "viewer-loaded-model";
+                    updateOrigin(provider);
+                    await provider.open();
+                    updateOrigin(provider);
+
+                    if (provider.status === "ready") {
+                        result.ready += 1;
+                    }
+                    else {
+                        result.failed += 1;
+                    }
+
+                    result.models.push({
+                        modelId,
+                        name: file.name,
+                        size: file.size,
+                        status: provider.status
+                    });
+                }
+                catch (error) {
+                    provider.status = "discovered";
+                    provider.error =
+                        error?.message || String(error);
+                    result.failed += 1;
+                    result.models.push({
+                        modelId,
+                        name,
+                        status: "error",
+                        message: provider.error
+                    });
+                }
+                finally {
+                    this.hydratingModelIds.delete(modelId);
+                }
+            }
+
+            this.removeDuplicateSources();
+            this.logHydration(result);
+
+            window.dispatchEvent(
+                new CustomEvent(
+                    "cross-section-geometry-updated",
+                    { detail: result }
+                )
+            );
+
+            if (result.ready > 0) {
+                document
+                    .getElementById("btnRefreshModels")
+                    ?.click();
+            }
+        });
+    }
+
+    logHydration(result) {
+        console.log(
+            "===== AUTOMATISK MODELLFIL v0.6.0 ====="
+        );
+        console.dir(result);
     }
 
     async addLocalFiles(files, onProgress) {
@@ -139,8 +361,14 @@ export class GeometryRegistry {
 
         for (const file of Array.from(files || [])) {
             const fileExtension = extension(file.name);
-            const type = fileExtension === "trimbim" ? "trb" : fileExtension;
-            let provider = this.findBySource(file.name, type);
+            const type = fileExtension === "trimbim"
+                ? "trb"
+                : fileExtension;
+
+            let provider = this.findBySource(
+                file.name,
+                type
+            );
 
             if (!provider) {
                 provider = this.create({
@@ -148,6 +376,7 @@ export class GeometryRegistry {
                     origin: "local",
                     file
                 });
+
                 if (!provider) continue;
                 this.providers.push(provider);
             }
@@ -155,6 +384,7 @@ export class GeometryRegistry {
                 provider.attachFile(file);
             }
 
+            provider.fileOrigin = "local-file-picker";
             updateOrigin(provider);
             onProgress?.(provider, "opening");
             await provider.open();
@@ -171,27 +401,40 @@ export class GeometryRegistry {
         const groups = new Map();
 
         for (const provider of this.providers) {
-            const key = `${provider.type}:${normalizedSourceKey(provider.name)}`;
-            if (!groups.has(key)) groups.set(key, []);
+            const key =
+                `${provider.type}:` +
+                normalizedSourceKey(provider.name);
+
+            if (!groups.has(key)) {
+                groups.set(key, []);
+            }
+
             groups.get(key).push(provider);
         }
 
         for (const providers of groups.values()) {
             if (providers.length < 2) continue;
 
-            const keeper = providers.find(provider =>
-                provider.file && provider.modelId
-            ) || providers.find(provider =>
-                provider.file
-            ) || providers.find(provider =>
-                provider.modelId
-            ) || providers[0];
+            const keeper =
+                providers.find(provider =>
+                    provider.file &&
+                    provider.modelId
+                ) ||
+                providers.find(provider =>
+                    provider.file
+                ) ||
+                providers.find(provider =>
+                    provider.modelId
+                ) ||
+                providers[0];
 
             for (const duplicate of providers) {
                 if (duplicate === keeper) continue;
 
                 if (!keeper.file && duplicate.file) {
                     keeper.file = duplicate.file;
+                    keeper.fileOrigin =
+                        duplicate.fileOrigin;
                     keeper.status = duplicate.status;
                     keeper.entities = duplicate.entities;
                     keeper.meshes = duplicate.meshes;
@@ -200,26 +443,37 @@ export class GeometryRegistry {
                     keeper.error = duplicate.error;
 
                     if ("globalIdIndex" in duplicate) {
-                        keeper.globalIdIndex = duplicate.globalIdIndex;
+                        keeper.globalIdIndex =
+                            duplicate.globalIdIndex;
                     }
+
                     if ("meshIndex" in duplicate) {
-                        keeper.meshIndex = duplicate.meshIndex;
+                        keeper.meshIndex =
+                            duplicate.meshIndex;
                     }
+
                     if ("ifcApi" in duplicate) {
                         keeper.ifcApi = duplicate.ifcApi;
-                        keeper.ifcModelId = duplicate.ifcModelId;
+                        keeper.ifcModelId =
+                            duplicate.ifcModelId;
                     }
                 }
 
                 if (!keeper.modelId && duplicate.modelId) {
                     keeper.modelId = duplicate.modelId;
-                    keeper.modelSpec = duplicate.modelSpec;
+                    keeper.modelSpec =
+                        duplicate.modelSpec;
                     keeper.name = duplicate.name;
                 }
 
-                const duplicateIndex = this.providers.indexOf(duplicate);
+                const duplicateIndex =
+                    this.providers.indexOf(duplicate);
+
                 if (duplicateIndex >= 0) {
-                    this.providers.splice(duplicateIndex, 1);
+                    this.providers.splice(
+                        duplicateIndex,
+                        1
+                    );
                 }
             }
 
@@ -228,8 +482,12 @@ export class GeometryRegistry {
     }
 
     remove(id) {
-        const index = this.providers.findIndex(provider => provider.id === id);
+        const index = this.providers.findIndex(
+            provider => provider.id === id
+        );
+
         if (index < 0) return false;
+
         this.providers[index].close();
         this.providers.splice(index, 1);
         return true;
@@ -242,6 +500,7 @@ export class GeometryRegistry {
             if (provider.modelId) {
                 provider.close();
                 provider.file = null;
+                provider.fileOrigin = null;
                 provider.status = "discovered";
                 provider.entities = [];
                 provider.meshes = [];
@@ -254,22 +513,49 @@ export class GeometryRegistry {
     }
 
     summary() {
-        const sources = this.providers.map(provider => provider.getSummary());
+        const sources = this.providers.map(
+            provider => provider.getSummary()
+        );
+
+        for (let index = 0; index < sources.length; index += 1) {
+            sources[index].origin =
+                this.providers[index].origin;
+            sources[index].fileOrigin =
+                this.providers[index].fileOrigin || null;
+        }
+
         return {
             sourceCount: sources.length,
-            viewerCount: sources.filter(source =>
-                source.origin.includes("viewer")
-            ).length,
-            localCount: sources.filter(source =>
-                source.origin.includes("local")
-            ).length,
-            ifcCount: sources.filter(source => source.type === "ifc").length,
-            trbCount: sources.filter(source => source.type === "trb").length,
-            readyCount: sources.filter(source => source.status === "ready").length,
-            totalEntities: sources.reduce(
-                (sum, source) => sum + source.entityCount,
-                0
-            ),
+            viewerCount:
+                sources.filter(source =>
+                    source.origin.includes("viewer")
+                ).length,
+            localCount:
+                sources.filter(source =>
+                    source.origin.includes("local")
+                ).length,
+            automaticCount:
+                sources.filter(source =>
+                    source.origin.includes("automatic")
+                ).length,
+            ifcCount:
+                sources.filter(source =>
+                    source.type === "ifc"
+                ).length,
+            trbCount:
+                sources.filter(source =>
+                    source.type === "trb"
+                ).length,
+            readyCount:
+                sources.filter(source =>
+                    source.status === "ready"
+                ).length,
+            totalEntities:
+                sources.reduce(
+                    (sum, source) =>
+                        sum + source.entityCount,
+                    0
+                ),
             sources
         };
     }
