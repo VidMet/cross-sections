@@ -1,17 +1,10 @@
-import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.5.4g";
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.5.4h";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
 import { GeometryRegistry } from "./geometry/geometry-registry.js";
-import {
-    renderProfileShell,
-    renderGeometryDiagnostic,
-    renderSectionSegments
-} from "./svg-renderer.js";
-import {
-    intersectMeshes
-} from "./geometry/section-engine.js?v=0.5.4g";
+import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js";
+import { intersectMeshes } from "./geometry/section-engine.js?v=0.5.4h";
 
-const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4g-locked-per-model";
-
+const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4h-viewer-ifc-calibration";
 const R = new GeometryRegistry();
 const S = { points: [], selected: null, station: 0, frame: null, marker: null, planeIds: [] };
 const $ = id => document.getElementById(id);
@@ -19,11 +12,7 @@ const markerUrl = new URL("../assets/station-marker.png", import.meta.url).href;
 const refresh = { timer: null, inProgress: false, pending: false, lastSignature: null, retried: false };
 const DEBOUNCE_MS = 500;
 
-function log(name, value) {
-    console.log(`===== ${name} =====`);
-    console.dir(value);
-}
-
+function log(name, value) { console.log(`===== ${name} =====`); console.dir(value); }
 function renderSources() {
     const box = $("geometrySourceList");
     const summary = R.summary();
@@ -43,7 +32,6 @@ function renderSources() {
     }
     $("geometrySourceSummary").textContent = `${summary.sourceCount} kilder · ${summary.viewerCount} fra visning · ${summary.localCount} lokale · ${summary.ifcCount} IFC + ${summary.trbCount} TRB`;
 }
-
 function eventName(detail) {
     const event = detail?.event;
     return typeof event === "string" ? event : String(event?.type || event?.name || event?.event || event?.action || "");
@@ -57,12 +45,8 @@ function schedule(reason) {
     refresh.timer = setTimeout(() => { refresh.timer = null; discover({ reason }); }, DEBOUNCE_MS);
 }
 function signature(models, ids) {
-    return [
-        ...Array.from(ids).map(id => `v:${id}`),
-        ...models.map(model => `${model.modelId || model.id || model.fileId || model.versionId}:${model.name || model.fileName || model.displayName || ""}`)
-    ].sort().join("|");
+    return [...Array.from(ids).map(id => `v:${id}`), ...models.map(model => `${model.modelId || model.id || model.fileId || model.versionId}:${model.name || model.fileName || model.displayName || ""}`)].sort().join("|");
 }
-
 async function discover({ reason = "manual", force = false } = {}) {
     const api = getAPI();
     if (!api?.viewer) return;
@@ -73,29 +57,16 @@ async function discover({ reason = "manual", force = false } = {}) {
         if (reason === "manual" || reason === "startup") setStatus("Henter synlige modeller...");
         const groups = await api.viewer.getObjects({}, { visible: true });
         const ids = new Set((groups || []).filter(group => group.modelId && group.objects?.length).map(group => String(group.modelId)));
-        let all = typeof api.viewer.getModels === "function"
-            ? await api.viewer.getModels()
-            : typeof api.viewer.getModelFiles === "function"
-                ? await api.viewer.getModelFiles()
-                : [];
+        let all = typeof api.viewer.getModels === "function" ? await api.viewer.getModels() : typeof api.viewer.getModelFiles === "function" ? await api.viewer.getModelFiles() : [];
         if (!Array.isArray(all)) all = [];
-        const models = all.filter(model => [model.modelId, model.id, model.fileId, model.versionId]
-            .filter(value => value != null).map(String).some(value => ids.has(value)));
+        const models = all.filter(model => [model.modelId, model.id, model.fileId, model.versionId].filter(value => value != null).map(String).some(value => ids.has(value)));
         const currentSignature = signature(models, ids);
         if (!force && currentSignature === refresh.lastSignature) return;
         refresh.lastSignature = currentSignature;
         R.syncViewerModels(models);
         renderSources();
         const summary = R.summary();
-        log("SYNLIGE MODELLER - OPPDATERT", {
-            reason,
-            visibleObjectGroupCount: ids.size,
-            visibleModelCount: models.length,
-            models: models.map(model => ({
-                id: model.modelId || model.id || model.fileId || model.versionId,
-                name: model.name || model.fileName || model.displayName
-            }))
-        });
+        log("SYNLIGE MODELLER - OPPDATERT", { reason, visibleObjectGroupCount: ids.size, visibleModelCount: models.length, models: models.map(model => ({ id: model.modelId || model.id || model.fileId || model.versionId, name: model.name || model.fileName || model.displayName })) });
         setStatus(`${summary.viewerCount} synlige IFC/TRB-modeller funnet`);
         if (reason === "startup" && ids.size && models.length === 0 && !refresh.retried) {
             refresh.retried = true;
@@ -109,7 +80,6 @@ async function discover({ reason = "manual", force = false } = {}) {
         if (refresh.pending) { refresh.pending = false; schedule("pending"); }
     }
 }
-
 async function localFiles(event) {
     const files = event.target.files;
     if (!files?.length) return;
@@ -117,15 +87,10 @@ async function localFiles(event) {
     await R.addLocalFiles(files, renderSources);
     renderSources();
     const errors = R.summary().sources.filter(source => source.status === "error");
-    if (errors.length) {
-        console.error("GEOMETRIKILDER MED FEIL:", errors);
-        setStatus(`${errors.length} geometrikilde(r) feilet - se Console`);
-    } else {
-        setStatus(`${R.summary().readyCount} geometrikilde(r) klare`);
-    }
+    if (errors.length) { console.error("GEOMETRIKILDER MED FEIL:", errors); setStatus(`${errors.length} geometrikilde(r) feilet - se Console`); }
+    else setStatus(`${R.summary().readyCount} geometrikilde(r) klare`);
     event.target.value = "";
 }
-
 const norm = vector => {
     const length = Math.hypot(vector.x, vector.y, vector.z);
     return length ? { x: vector.x / length, y: vector.y / length, z: vector.z / length } : { x: 0, y: 0, z: 0 };
@@ -142,24 +107,13 @@ function evaluate(station) {
     if (points.length < 2) return null;
     let a = points[0], b = points[1];
     for (let index = 0; index < points.length - 1; index += 1) {
-        if (station >= points[index].station && station <= points[index + 1].station) {
-            a = points[index]; b = points[index + 1]; break;
-        }
+        if (station >= points[index].station && station <= points[index + 1].station) { a = points[index]; b = points[index + 1]; break; }
     }
     if (station >= points.at(-1).station) { a = points.at(-2); b = points.at(-1); }
     const ratio = Math.max(0, Math.min(1, (station - a.station) / (b.station - a.station)));
-    const position = {
-        x: a.x + (b.x - a.x) * ratio,
-        y: a.y + (b.y - a.y) * ratio,
-        z: a.z + (b.z - a.z) * ratio
-    };
+    const position = { x: a.x + (b.x - a.x) * ratio, y: a.y + (b.y - a.y) * ratio, z: a.z + (b.z - a.z) * ratio };
     const tangent = norm({ x: b.x - a.x, y: b.y - a.y, z: 0 });
-    return {
-        station,
-        position,
-        horizontalTangent: tangent,
-        horizontalNormal: { x: -tangent.y, y: tangent.x, z: 0 }
-    };
+    return { station, position, horizontalTangent: tangent, horizontalNormal: { x: -tangent.y, y: tangent.x, z: 0 } };
 }
 async function mark(frame) {
     const api = getAPI();
@@ -178,7 +132,6 @@ function setStation(value) {
     S.frame = evaluate(station);
     if (S.frame) mark(S.frame);
 }
-
 async function selectProfile() {
     try {
         const api = getAPI();
@@ -202,7 +155,10 @@ async function selectProfile() {
         setStatus("Profil valgt");
     } catch (error) { alert(error.message); }
 }
-
+function copyBox(box) {
+    if (!box?.min || !box?.max) return null;
+    return { min: { x: +box.min.x, y: +box.min.y, z: +box.min.z }, max: { x: +box.max.x, y: +box.max.y, z: +box.max.z } };
+}
 async function candidates(api, frame, sectionWidth) {
     const groups = await api.viewer.getObjects({}, { visible: true });
     const candidatesByModel = [];
@@ -210,7 +166,7 @@ async function candidates(api, frame, sectionWidth) {
     for (const group of groups) {
         const runtimeIds = (group.objects || []).map(object => Number(object.id)).filter(Number.isFinite);
         totalObjects += runtimeIds.length;
-        const modelCandidates = [];
+        const selectedItems = [];
         for (let index = 0; index < runtimeIds.length; index += 300) {
             const batch = runtimeIds.slice(index, index + 300);
             const boxes = await api.viewer.getObjectBoundingBoxes(group.modelId, batch);
@@ -220,53 +176,41 @@ async function candidates(api, frame, sectionWidth) {
                 const values = [];
                 for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
                     const dx = x - frame.position.x, dy = y - frame.position.y;
-                    values.push({
-                        offset: dx * frame.horizontalNormal.x + dy * frame.horizontalNormal.y,
-                        longitudinal: dx * frame.horizontalTangent.x + dy * frame.horizontalTangent.y,
-                        elevation: z
-                    });
+                    values.push({ offset: dx * frame.horizontalNormal.x + dy * frame.horizontalNormal.y, longitudinal: dx * frame.horizontalTangent.x + dy * frame.horizontalTangent.y, elevation: z });
                 }
                 const minimum = key => Math.min(...values.map(value => value[key]));
                 const maximum = key => Math.max(...values.map(value => value[key]));
                 if (minimum("longitudinal") <= 1 && maximum("longitudinal") >= -1 && minimum("offset") <= sectionWidth / 2 && maximum("offset") >= -sectionWidth / 2 && minimum("elevation") <= frame.position.z + 12 && maximum("elevation") >= frame.position.z - 8) {
-                    modelCandidates.push(Number(item.id)); candidateCount += 1;
+                    selectedItems.push({ runtimeId: Number(item.id), viewerBox: copyBox(box) });
+                    candidateCount += 1;
                 }
             }
         }
-        if (modelCandidates.length) {
+        if (selectedItems.length) {
             let externalIds = [];
-            try { externalIds = await api.viewer.convertToObjectIds(group.modelId, modelCandidates); }
+            try { externalIds = await api.viewer.convertToObjectIds(group.modelId, selectedItems.map(item => item.runtimeId)); }
             catch (error) { console.warn("Kunne ikke konvertere RuntimeIds til eksterne ID-er:", group.modelId, error); }
-            candidatesByModel.push({ modelId: String(group.modelId), runtimeIds: modelCandidates, externalIds: (externalIds || []).map(String) });
+            const items = selectedItems.map((item, index) => ({ ...item, globalId: externalIds?.[index] != null ? String(externalIds[index]) : null })).filter(item => item.globalId);
+            candidatesByModel.push({ modelId: String(group.modelId), runtimeIds: items.map(item => item.runtimeId), externalIds: items.map(item => item.globalId), items });
         }
     }
     return { totalObjects, candidateCount, candidatesByModel };
 }
-
 async function generate() {
     if (!S.frame) return alert("Velg profileringslinje først");
-    const api = getAPI();
-    const frame = S.frame;
+    const api = getAPI(), frame = S.frame;
     const sectionWidth = Number($("sectionWidth").value) || 50;
     try {
-        setStatus("Oppretter snittplan og finner kandidater...");
+        setStatus("Oppretter snittplan og kalibrerer IFC mot Viewer...");
         if (S.planeIds.length) await api.viewer.removeSectionPlanes(S.planeIds);
-        const planes = await api.viewer.addSectionPlane({
-            positionX: frame.position.x * 1000,
-            positionY: frame.position.y * 1000,
-            positionZ: frame.position.z * 1000,
-            directionX: -frame.horizontalTangent.x,
-            directionY: -frame.horizontalTangent.y,
-            directionZ: 0,
-            controlsVisible: true
-        });
+        const planes = await api.viewer.addSectionPlane({ positionX: frame.position.x * 1000, positionY: frame.position.y * 1000, positionZ: frame.position.z * 1000, directionX: -frame.horizontalTangent.x, directionY: -frame.horizontalTangent.y, directionZ: 0, controlsVisible: true });
         S.planeIds = (planes || []).map(plane => Number(plane.id)).filter(Number.isFinite);
         const svg = $("profileSvg");
         const profileData = { station: frame.station, alignmentName: S.selected.product?.name, centerElevation: frame.position.z, sectionWidth, version: VERSION };
         renderProfileShell(svg, profileData);
         const candidateResult = await candidates(api, frame, sectionWidth);
         const readyIfcProviders = R.providers.filter(provider => provider.type === "ifc" && provider.status === "ready" && provider.file);
-        const meshes = [];
+        const meshes = [], calibrations = [];
         let linkedCandidateCount = 0;
         for (const provider of readyIfcProviders) {
             const viewerGroup = candidateResult.candidatesByModel.find(group => String(group.modelId) === String(provider.modelId));
@@ -274,37 +218,21 @@ async function generate() {
             const providerMeshes = externalIds.length ? provider.getMeshesForGlobalIds(externalIds) : provider.getAllMeshes();
             if (externalIds.length) linkedCandidateCount += externalIds.filter(id => provider.globalIdIndex.has(id)).length;
             meshes.push(...providerMeshes);
+            if (viewerGroup?.items?.length) calibrations.push({ sourceId: String(provider.id), modelId: String(provider.modelId), pairs: viewerGroup.items.filter(item => provider.globalIdIndex.has(item.globalId)) });
         }
-        const sectionResult = intersectMeshes(meshes, frame, { sectionWidth });
+        const sectionResult = intersectMeshes(meshes, frame, { sectionWidth, calibrations });
         renderSectionSegments(svg, sectionResult.segments, profileData);
-        const diagnostics = {
-            ...candidateResult,
-            ...R.summary(),
-            ifcProvidersReady: readyIfcProviders.length,
-            linkedCandidateCount,
-            meshesProcessed: sectionResult.meshesProcessed,
-            trianglesTested: sectionResult.trianglesTested,
-            segmentCount: sectionResult.segments.length,
-            objectsDrawn: sectionResult.objectsDrawn,
-            sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION,
-            selectedAxisMapping: sectionResult.selectedAxisMapping,
-            profileTypeDiagnostic: sectionResult.profileTypeDiagnostic
-        };
+        const diagnostics = { ...candidateResult, ...R.summary(), ifcProvidersReady: readyIfcProviders.length, linkedCandidateCount, meshesProcessed: sectionResult.meshesProcessed, trianglesTested: sectionResult.trianglesTested, segmentCount: sectionResult.segments.length, objectsDrawn: sectionResult.objectsDrawn, sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, selectedAxisMapping: sectionResult.selectedAxisMapping, profileTypeDiagnostic: sectionResult.profileTypeDiagnostic, viewerIfcCalibration: sectionResult.calibrationDiagnostic };
         renderGeometryDiagnostic(svg, diagnostics);
-        console.log("===== IFC-SNITTRESULTAT =====");
-        console.dir(diagnostics);
-        setStatus(sectionResult.segments.length
-            ? `${sectionResult.objectsDrawn} objekter tegnet, ${sectionResult.segments.length} segmenter`
-            : readyIfcProviders.length
-                ? "Ingen IFC-geometri traff snittplanet - se Console"
-                : "Koble en lokal IFC-fil under Avansert for å tegne profilgeometri");
+        console.log("===== VIEWER–IFC-KALIBRERING ====="); console.dir(sectionResult.calibrationDiagnostic);
+        console.log("===== IFC-SNITTRESULTAT ====="); console.dir(diagnostics);
+        setStatus(sectionResult.segments.length ? `${sectionResult.objectsDrawn} objekter tegnet, ${sectionResult.segments.length} segmenter` : readyIfcProviders.length ? "Ingen IFC-geometri traff snittplanet - se Console" : "Koble en lokal IFC-fil under Avansert for å tegne profilgeometri");
     } catch (error) {
         console.error("FEIL VED GENERERING AV IFC-SNITT:", error);
         setStatus("Feil ved generering - se Console");
         alert(error.message || String(error));
     }
 }
-
 function bind() {
     $("btnRefreshModels").onclick = () => discover({ reason: "manual", force: true });
     $("geometryFiles").onchange = localFiles;
@@ -321,10 +249,9 @@ function bind() {
 async function init() {
     $("versionInfo").textContent = "v" + VERSION;
     $("buildInfo").textContent = BUILD_DATE;
-    bind();
-    renderSources();
+    bind(); renderSources();
     console.log("===== MODULVERSJONER =====");
-    console.dir({ applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.5.4g" });
+    console.dir({ applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.5.4h" });
     await connectTC();
     await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
