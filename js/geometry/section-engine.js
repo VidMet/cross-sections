@@ -125,7 +125,19 @@ function triangleIntersection(a,b,c,plane){
     const unique=[];for(const point of hits)if(!unique.some(existing=>Math.abs(existing.x-point.x)<EPSILON&&Math.abs(existing.y-point.y)<EPSILON&&Math.abs(existing.z-point.z)<EPSILON))unique.push(point);
     return unique.length>=2?[unique[0],unique[1]]:null;
 }
-function toProfilePoint(point,frame){const dx=point.x-frame.position.x,dy=point.y-frame.position.y;return{offset:dx*frame.horizontalNormal.x+dy*frame.horizontalNormal.y,elevation:point.z};}
+function toProfilePoint(point, frame) {
+    const dx = point.x - frame.position.x;
+    const dy = point.y - frame.position.y;
+
+    return {
+        offset: -(
+            dx * frame.horizontalNormal.x +
+            dy * frame.horizontalNormal.y
+        ),
+
+        elevation: point.z
+    };
+}
 function segmentMetrics(segments){
     if(!segments.length)return{horizontalSpan:0,verticalSpan:0,totalLength:0,longestSegment:0,horizontalRatio:0,verticalRatio:0};
     const offsets=[],elevations=[];let totalLength=0,longestSegment=0,horizontalLength=0,verticalLength=0;
