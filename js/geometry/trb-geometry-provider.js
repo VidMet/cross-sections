@@ -1,7 +1,7 @@
 import { GeometryProvider } from "./geometry-provider.js";
 import { getAPI } from "../tc-api.js";
-import { TrimBimStructureReader, LOCAL_TRB_STRUCTURE_VERSION } from "../vendor/trb-sdk/index.js?v=0.6.5d";
-export const TRB_GEOMETRY_PROVIDER_VERSION = "0.6.5d-trb8-geometry-structure";
+import { TrimBimSchemaReader, LOCAL_TRB_SCHEMA_VERSION } from "../vendor/trb-sdk/index.js?v=0.6.5e";
+export const TRB_GEOMETRY_PROVIDER_VERSION = "0.6.5e-trb8-schema-mapping";
 function mergeBox(target, box) {
     if (!box?.min || !box?.max) return target;
     if (!target) return { min: { ...box.min }, max: { ...box.max } };
@@ -29,28 +29,32 @@ export class TrbGeometryProvider extends GeometryProvider {
     }
     async open() {
         if (!this.file) { this.status = "discovered-no-blob"; return this.getSummary(); }
-        this.status = "opening-structure"; this.error = null;
+        this.status = "opening-schema"; this.error = null;
         try {
             this.buffer = await this.file.arrayBuffer();
-            const reader = TrimBimStructureReader.open(this.buffer);
+            const reader = TrimBimSchemaReader.open(this.buffer);
+            const schema = reader.schemaDiagnostic();
             const diagnostic = {
                 providerVersion: TRB_GEOMETRY_PROVIDER_VERSION,
-                localReaderVersion: LOCAL_TRB_STRUCTURE_VERSION,
-                purpose: "Strukturdiagnose for entitets-, instans- og geometripooler i generelle TRB8-modeller.",
+                localReaderVersion: LOCAL_TRB_SCHEMA_VERSION,
+                purpose: "Verifisert TRB8-skjemaavbildning med første semantiske kartlegging av ModelEntities.",
                 fileName: this.file.name, fileSize: this.file.size, mimeType: this.file.type,
                 modelId: this.modelId ?? null, origin: this.origin,
-                structure: reader.structureDiagnostic(),
+                schema,
                 viewer: await this.viewerDiagnostic(),
+                entityViewerDelta: null,
                 meshDecodingImplemented: false
             };
+            diagnostic.entityViewerDelta = schema.verifiedMappings.ModelEntities.entityCount - diagnostic.viewer.visibleRuntimeIdCount;
             this.metadata = diagnostic;
-            this.status = diagnostic.structure.header.identifier === "TRB8" && diagnostic.structure.rootTable ? "ready-structure" : "structure-error";
-            console.log("===== TRB8-GEOMETRY-STRUCTURE v0.6.5d ====="); console.dir(diagnostic);
+            this.entities = Array.from({ length: schema.verifiedMappings.ModelEntities.entityCount }, (_, index) => ({ sourceId: this.id, entityIndex: index }));
+            this.status = schema.header.identifier === "TRB8" ? "ready-schema" : "schema-error";
+            console.log("===== TRB8-SCHEMA-MAPPING v0.6.5e ====="); console.dir(diagnostic);
             if (typeof window !== "undefined") {
-                const list = Array.isArray(window.__crossSectionTrbGeometryStructures) ? window.__crossSectionTrbGeometryStructures : [];
-                window.__crossSectionTrbGeometryStructures = [...list.filter(item => String(item.modelId) !== String(diagnostic.modelId)), diagnostic];
+                const list = Array.isArray(window.__crossSectionTrbSchemaMappings) ? window.__crossSectionTrbSchemaMappings : [];
+                window.__crossSectionTrbSchemaMappings = [...list.filter(item => String(item.modelId) !== String(diagnostic.modelId)), diagnostic];
             }
-        } catch (error) { this.status = "structure-error"; this.error = error?.message || String(error); console.error("TRB8-GEOMETRY-STRUCTURE FEILET:", error); }
+        } catch (error) { this.status = "schema-error"; this.error = error?.message || String(error); console.error("TRB8-SCHEMA-MAPPING FEILET:", error); }
         return this.getSummary();
     }
     getMeshesForGlobalIds() { return []; }
