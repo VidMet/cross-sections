@@ -1,132 +1,20 @@
-export const LOCAL_TRB_SCHEMA_VERSION = "0.6.5e-local-schema-mapping";
-
-function check(offset, size, total, label) {
-    if (!Number.isInteger(offset) || offset < 0 || offset + size > total) {
-        throw new RangeError(`${label}: offset ${offset}, size ${size}, total ${total}`);
-    }
-}
-function u16(view, offset, label = "u16") { check(offset, 2, view.byteLength, label); return view.getUint16(offset, true); }
-function i32(view, offset, label = "i32") { check(offset, 4, view.byteLength, label); return view.getInt32(offset, true); }
-function u32(view, offset, label = "u32") { check(offset, 4, view.byteLength, label); return view.getUint32(offset, true); }
-function identifier(bytes) { return bytes.length >= 8 ? String.fromCharCode(...bytes.slice(4, 8)) : ""; }
-function tableInfo(view, tableOffset, label = "table") {
-    check(tableOffset, 4, view.byteLength, label);
-    const distance = i32(view, tableOffset, `${label}.vtableDistance`);
-    const vtableOffset = tableOffset - distance;
-    check(vtableOffset, 4, view.byteLength, `${label}.vtable`);
-    const vtableLength = u16(view, vtableOffset, `${label}.vtableLength`);
-    const objectLength = u16(view, vtableOffset + 2, `${label}.objectLength`);
-    if (vtableLength < 4 || vtableLength > 1024 || objectLength < 4 || objectLength > 4096) throw new RangeError(`${label}: implausible table layout`);
-    return { tableOffset, vtableOffset, vtableLength, objectLength, fieldCount: Math.floor((vtableLength - 4) / 2) };
-}
-function fieldAddress(view, table, fieldIndex) {
-    const slot = table.vtableOffset + 4 + fieldIndex * 2;
-    if (slot + 2 > table.vtableOffset + table.vtableLength) return null;
-    const relativeOffset = u16(view, slot, `field[${fieldIndex}]`);
-    return relativeOffset ? table.tableOffset + relativeOffset : null;
-}
-function indirect(view, address, label) {
-    if (address == null) return null;
-    const relative = u32(view, address, `${label}.relativeOffset`);
-    const target = address + relative;
-    check(target, 4, view.byteLength, `${label}.target`);
-    return target;
-}
-function tableField(view, table, fieldIndex, label) {
-    const address = fieldAddress(view, table, fieldIndex);
-    const target = indirect(view, address, label);
-    return target == null ? null : tableInfo(view, target, label);
-}
-function vectorField(view, table, fieldIndex, label) {
-    const address = fieldAddress(view, table, fieldIndex);
-    const target = indirect(view, address, label);
-    if (target == null) return null;
-    const length = u32(view, target, `${label}.length`);
-    const dataOffset = target + 4;
-    check(dataOffset, 0, view.byteLength, `${label}.data`);
-    return { targetOffset: target, dataOffset, length };
-}
-function stringAtVectorIndex(view, vector, index) {
-    const slot = vector.dataOffset + index * 4;
-    check(slot, 4, view.byteLength, "stringVector.slot");
-    const target = slot + u32(view, slot, "stringVector.relativeOffset");
-    const length = u32(view, target, "string.length");
-    check(target + 4, length, view.byteLength, "string.bytes");
-    return new TextDecoder("utf-8").decode(new Uint8Array(view.buffer, target + 4, length));
-}
-function sampleStrings(view, vector, limit = 40) {
-    if (!vector) return [];
-    const output = [];
-    for (let index = 0; index < Math.min(vector.length, limit); index += 1) {
-        try { output.push(stringAtVectorIndex(view, vector, index)); }
-        catch (error) { output.push(`[decode-error:${error.message}]`); break; }
-    }
-    return output;
-}
-const MODEL_ENTITIES_FIELDS = [
-    { index: 0, name: "entities", type: "vector<Entity>" },
-    { index: 1, name: "hierarchies", type: "vector<HierarchyNode>" },
-    { index: 2, name: "guid_identifiers", type: "vector<Guid>" },
-    { index: 3, name: "string_identifiers", type: "vector<string>" },
-    { index: 4, name: "spatial_hash_identifiers", type: "vector<SpatialHash>" },
-    { index: 5, name: "dwg_handle_identifiers", type: "vector<long>" },
-    { index: 6, name: "entity_classes", type: "vector<string>" }
-];
-export class TrimBimSchemaReader {
-    static open(arrayBuffer) { return new TrimBimSchemaReader(arrayBuffer); }
-    constructor(arrayBuffer) {
-        this.buffer = arrayBuffer;
-        this.bytes = new Uint8Array(arrayBuffer);
-        this.view = new DataView(arrayBuffer);
-        this.rootOffset = u32(this.view, 0, "rootOffset");
-        this.header = { identifier: identifier(this.bytes), version: Number(identifier(this.bytes).replace("TRB", "")) || null, rootTableOffset: this.rootOffset, byteLength: this.bytes.length };
-        this.root = tableInfo(this.view, this.rootOffset, "TrimBimRoot");
-    }
-    schemaDiagnostic() {
-        const rootFields = [];
-        for (let index = 0; index < this.root.fieldCount; index += 1) {
-            const address = fieldAddress(this.view, this.root, index);
-            let targetOffset = null, targetTable = null;
-            try {
-                targetOffset = indirect(this.view, address, `root.field${index}`);
-                if (targetOffset != null) targetTable = tableInfo(this.view, targetOffset, `root.field${index}.table`);
-            } catch (_) { /* field may be scalar or vector */ }
-            rootFields.push({ index, address, targetOffset, candidateTable: targetTable ? { fieldCount: targetTable.fieldCount, vtableLength: targetTable.vtableLength, objectLength: targetTable.objectLength } : null });
-        }
-
-        // Verified against trimbim-v8.fbs: root field 0 points to ModelEntities.
-        const modelEntities = tableField(this.view, this.root, 0, "ModelEntities");
-        const mappedFields = MODEL_ENTITIES_FIELDS.map(definition => {
-            const vector = vectorField(this.view, modelEntities, definition.index, `ModelEntities.${definition.name}`);
-            return { ...definition, present: Boolean(vector), length: vector?.length ?? 0, dataOffset: vector?.dataOffset ?? null };
-        });
-        const stringIdentifiers = vectorField(this.view, modelEntities, 3, "ModelEntities.string_identifiers");
-        const entityClasses = vectorField(this.view, modelEntities, 6, "ModelEntities.entity_classes");
-        return {
-            readerVersion: LOCAL_TRB_SCHEMA_VERSION,
-            header: this.header,
-            rootTable: { fieldCount: this.root.fieldCount, vtableLength: this.root.vtableLength, objectLength: this.root.objectLength },
-            rootFields,
-            verifiedMappings: {
-                rootField0: "ModelEntities",
-                ModelEntities: {
-                    table: { fieldCount: modelEntities.fieldCount, vtableLength: modelEntities.vtableLength, objectLength: modelEntities.objectLength },
-                    fields: mappedFields,
-                    entityCount: mappedFields[0]?.length ?? 0,
-                    hierarchyCount: mappedFields[1]?.length ?? 0,
-                    guidIdentifierCount: mappedFields[2]?.length ?? 0,
-                    stringIdentifierCount: mappedFields[3]?.length ?? 0,
-                    spatialHashIdentifierCount: mappedFields[4]?.length ?? 0,
-                    dwgHandleIdentifierCount: mappedFields[5]?.length ?? 0,
-                    entityClassCount: mappedFields[6]?.length ?? 0,
-                    stringIdentifierSample: sampleStrings(this.view, stringIdentifiers),
-                    entityClassSample: sampleStrings(this.view, entityClasses)
-                }
-            },
-            unmappedRootFields: rootFields.slice(1).map(item => item.index),
-            geometryTypeCountsDecoded: false,
-            meshArraysDecoded: false,
-            note: "v0.6.5e maps only schema fields verified from trimbim-v8.fbs. Root fields 1-5 remain intentionally unnamed until their declarations are verified."
-        };
-    }
+export const LOCAL_TRB_POOLS_VERSION = "0.6.5f-local-geometry-pools";
+function check(o,s,t,l){if(!Number.isInteger(o)||o<0||o+s>t)throw new RangeError(`${l}: offset ${o}, size ${s}, total ${t}`)}
+function u16(v,o,l="u16"){check(o,2,v.byteLength,l);return v.getUint16(o,true)}
+function i32(v,o,l="i32"){check(o,4,v.byteLength,l);return v.getInt32(o,true)}
+function u32(v,o,l="u32"){check(o,4,v.byteLength,l);return v.getUint32(o,true)}
+function id(b){return b.length>=8?String.fromCharCode(...b.slice(4,8)):""}
+function table(v,o,l="table"){check(o,4,v.byteLength,l);const d=i32(v,o,`${l}.distance`),vt=o-d;check(vt,4,v.byteLength,`${l}.vtable`);const vl=u16(v,vt),ol=u16(v,vt+2);if(vl<4||vl>1024||ol<4||ol>4096)throw new RangeError(`${l}: implausible table`);return{tableOffset:o,vtableOffset:vt,vtableLength:vl,objectLength:ol,fieldCount:Math.floor((vl-4)/2)}}
+function addr(v,t,i){const s=t.vtableOffset+4+i*2;if(s+2>t.vtableOffset+t.vtableLength)return null;const r=u16(v,s);return r?t.tableOffset+r:null}
+function indirect(v,a,l){if(a==null)return null;const x=a+u32(v,a,l);check(x,4,v.byteLength,l);return x}
+function subtable(v,t,i,l){const x=indirect(v,addr(v,t,i),l);return x==null?null:table(v,x,l)}
+function vector(v,t,i,l){const x=indirect(v,addr(v,t,i),l);if(x==null)return null;const n=u32(v,x,`${l}.length`);return{targetOffset:x,dataOffset:x+4,length:n}}
+function fieldProbe(v,t,i,l){const a=addr(v,t,i);if(a==null)return{index:i,present:false};let x=null,st=null,vec=null;try{x=indirect(v,a,l);st=table(v,x,`${l}.table`)}catch{}try{if(x!=null){const n=u32(v,x,`${l}.vectorLength`);if(n<=v.byteLength-(x+4))vec={length:n,dataOffset:x+4}}}catch{}return{index:i,present:true,address:a,targetOffset:x,candidateTable:st?{fieldCount:st.fieldCount,vtableLength:st.vtableLength,objectLength:st.objectLength}:null,candidateVector:vec}}
+function tableFields(v,t,l){return Array.from({length:t.fieldCount},(_,i)=>fieldProbe(v,t,i,`${l}.field${i}`))}
+function str(v,vec,i){const s=vec.dataOffset+i*4,x=s+u32(v,s),n=u32(v,x);check(x+4,n,v.byteLength,"string");return new TextDecoder().decode(new Uint8Array(v.buffer,x+4,n))}
+function strSamples(v,vec,max=20){const a=[];if(!vec)return a;for(let i=0;i<Math.min(vec.length,max);i++){try{a.push(str(v,vec,i))}catch(e){a.push(`[decode-error:${e.message}]`);break}}return a}
+export class TrimBimPoolsReader{
+ static open(b){return new TrimBimPoolsReader(b)}
+ constructor(b){this.buffer=b;this.bytes=new Uint8Array(b);this.view=new DataView(b);this.root=table(this.view,u32(this.view,0),"root");this.header={identifier:id(this.bytes),version:Number(id(this.bytes).replace("TRB",""))||null,byteLength:this.bytes.length}}
+ diagnostic(){const v=this.view,r=this.root,entities=subtable(v,r,0,"ModelEntities"),pool1=subtable(v,r,1,"RootPool1"),pool2=subtable(v,r,2,"RootPool2");const entityFields=["entities","hierarchies","guid_identifiers","string_identifiers","spatial_hash_identifiers","dwg_handle_identifiers","entity_classes"].map((name,i)=>{const x=vector(v,entities,i,`ModelEntities.${name}`);return{index:i,name,length:x?.length??0,dataOffset:x?.dataOffset??null}});const classes=vector(v,entities,6,"ModelEntities.entity_classes");return{readerVersion:LOCAL_TRB_POOLS_VERSION,header:this.header,verified:{ModelEntities:{rootField:0,fieldCount:entities.fieldCount,fields:entityFields,entityCount:entityFields[0].length,entityClassSample:strSamples(v,classes)}},geometryPoolCandidates:[{rootField:1,table:{fieldCount:pool1.fieldCount,vtableLength:pool1.vtableLength,objectLength:pool1.objectLength},fields:tableFields(v,pool1,"RootPool1")},{rootField:2,table:{fieldCount:pool2.fieldCount,vtableLength:pool2.vtableLength,objectLength:pool2.objectLength},fields:tableFields(v,pool2,"RootPool2")}],rootScalarOrVectorCandidates:[3,4,5].map(i=>fieldProbe(v,r,i,`root.field${i}`)),geometryTypeCountsDecoded:false,instanceEntityLinksDecoded:false,meshArraysDecoded:false,note:"Root fields 1 and 2 are mapped as geometry-pool candidates. Field lengths and nested table shapes are reported without assigning unverified semantic names."}}
 }

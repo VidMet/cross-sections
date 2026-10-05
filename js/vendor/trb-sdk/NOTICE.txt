@@ -1,3 +1,4 @@
-v0.6.5e contains a project-specific FlatBuffers reader that maps only fields verified from the public trimbim-v8.fbs schema.
-It does not redistribute the upstream @speckle/trb-sdk implementation.
-The upstream repository and reconstructed schema are AGPL-3.0; review licensing before incorporating additional upstream implementation code.
+v0.6.5f contains a project-specific FlatBuffers reader.
+ModelEntities is mapped from the public trimbim-v8.fbs schema.
+Root fields 1 and 2 are intentionally reported as geometry-pool candidates until their exact declarations are verified.
+No upstream @speckle/trb-sdk implementation is redistributed.
