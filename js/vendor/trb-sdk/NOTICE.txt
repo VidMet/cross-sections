@@ -1,1 +1,1 @@
-v0.6.5j contains a project-specific FlatBuffers GeometryInstance diagnostic. GeometryInstance.SIZE=20 and the instances vector field are based on the publicly visible schema.ts API. The five uint32 fields remain raw until their semantics are validated. No upstream implementation is redistributed.
+v0.6.5k contains a project-specific mesh-pool mapping diagnostic. It maps the three non-empty mesh pools and decodes mesh table vector lengths, but does not yet emit mesh arrays. No upstream implementation is redistributed.
