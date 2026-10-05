@@ -1,7 +1,7 @@
-﻿import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.2a";
-import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.2a";
+﻿import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.1";
+import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.1";
 import { getAPI } from "../tc-api.js";
-export const GEOMETRY_REGISTRY_VERSION = "0.6.2a-trb8-mesh-diagnostic";
+export const GEOMETRY_REGISTRY_VERSION = "0.6.1-content-routing";
 const ROUTING_SAMPLE_BYTES = 4096;
 
 async function inspectLoadedContent(file) {
@@ -363,7 +363,7 @@ export class GeometryRegistry {
                     provider.contentRouting = content;
                     updateOrigin(provider);
 
-                    console.log("===== INNHOLDSBASERT PROVIDER-RUTING v0.6.2aa =====");
+                    console.log("===== INNHOLDSBASERT PROVIDER-RUTING v0.6.1 =====");
                     console.dir({
                         modelId,
                         viewerFileName: file.name,
@@ -376,7 +376,7 @@ export class GeometryRegistry {
                     await provider.open();
                     updateOrigin(provider);
 
-                    if (provider.status === "ready" || provider.status === "ready-diagnostic") {
+                    if (provider.status === "ready") {
                         result.ready += 1;
                     }
                     else {
@@ -427,7 +427,7 @@ export class GeometryRegistry {
 
     logHydration(result) {
         console.log(
-            "===== AUTOMATISK MODELLFIL v0.6.2aa ====="
+            "===== AUTOMATISK MODELLFIL v0.6.1 ====="
         );
         console.dir(result);
     }
