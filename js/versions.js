@@ -1,3 +1,1 @@
-export const APP_NAME = "Interaktiv tverrprofilviser";
-export const VERSION = "0.6.5g";
-export const BUILD_DATE = "2026-10-05 14:16";
+export const APP_NAME="Interaktiv tverrprofilviser";export const VERSION="0.6.5h";export const BUILD_DATE="2026-10-05 17:48";
