@@ -1,4 +1,4 @@
-export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3e";
+export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3f";
 
 function coreBase(location) {
     const value = String(location || "").toLowerCase();
@@ -125,7 +125,7 @@ export async function downloadOriginalIfc({ api, models, registry, renderSources
             diagnostic.models.push(result);
         }
     } catch (error) { diagnostic.error = error?.message || String(error); diagnostic.errorName = error?.name || "Error"; }
-    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3e =====");
+    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3f =====");
     console.dir(diagnostic);
     window.__crossSectionOriginalIfcDownloadDiagnostic = diagnostic;
     return diagnostic;

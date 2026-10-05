@@ -1,9 +1,9 @@
-import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3e";
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3f";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
-import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3e";
-import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3e";
-import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3e";
-import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3e";
+import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3f";
+import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3f";
+import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3f";
+import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3f";
 
 const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4i-mirrored-offset";
 const R = new GeometryRegistry();
@@ -96,7 +96,7 @@ async function logTrimbleFileMetadataDiagnostic(models) {
             });
         } catch (error) { diagnostic.loadedModels.push({ modelId, error: error?.message || String(error) }); }
     }
-    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3e", diagnostic);
+    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3f", diagnostic);
     window.__crossSectionTrimbleFileMetadataDiagnostic = diagnostic;
     return diagnostic;
 }
@@ -115,7 +115,8 @@ async function discover({ reason = "manual", force = false } = {}) {
         const currentSignature = signature(models, ids);
         if (!force && currentSignature === refresh.lastSignature) return;
         refresh.lastSignature = currentSignature;
-        R.syncViewerModels(models);
+        // v0.6.3f: Viewerens TRB-buffer registreres ikke som geometrikilde.
+        // Original IFC hentes og kobles til Viewer-modellen ved manuell oppdatering.
         await logTrimbleFileMetadataDiagnostic(models);
         if (reason === "manual") {
             setStatus("Ber om tilgang til original IFC-fil...");
@@ -274,7 +275,7 @@ function bind() {
 async function init() {
     $("versionInfo").textContent = "v" + VERSION; $("buildInfo").textContent = BUILD_DATE;
     bind(); renderSources();
-    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3e" });
+    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3f" });
     await connectTC(); await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
     console.log(APP_NAME, VERSION);
