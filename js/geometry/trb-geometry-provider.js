@@ -1,18 +1,8 @@
 import { GeometryProvider } from "./geometry-provider.js";
 import { getAPI } from "../tc-api.js";
+import { TrimBimCapabilityReader, LOCAL_TRB_SDK_CAPABILITY_VERSION } from "../vendor/trb-sdk/index.js?v=0.6.5c";
 
-export const TRB_GEOMETRY_PROVIDER_VERSION = "0.6.5b-trb-discovery-fix";
-const SAMPLE_BYTES = 4096;
-const MAX_RUNTIME_ID_SAMPLE = 20;
-const MAX_PROPERTY_SAMPLE = 5;
-
-function byteHex(bytes, maximum = 64) {
-    return Array.from(bytes.slice(0, maximum)).map(value => value.toString(16).padStart(2, "0")).join(" ");
-}
-
-function printable(bytes, maximum = 512) {
-    return Array.from(bytes.slice(0, maximum), value => value >= 32 && value <= 126 ? String.fromCharCode(value) : ".").join("");
-}
+export const TRB_GEOMETRY_PROVIDER_VERSION = "0.6.5c-trb8-sdk-capability";
 
 function scalarFields(value) {
     if (!value || typeof value !== "object") return {};
@@ -23,17 +13,15 @@ function scalarFields(value) {
     }
     return output;
 }
-
 function mergeBox(target, box) {
     if (!box?.min || !box?.max) return target;
-    if (!target) return { min: { x: +box.min.x, y: +box.min.y, z: +box.min.z }, max: { x: +box.max.x, y: +box.max.y, z: +box.max.z } };
+    if (!target) return { min: { ...box.min }, max: { ...box.max } };
     for (const axis of ["x", "y", "z"]) {
         target.min[axis] = Math.min(target.min[axis], +box.min[axis]);
         target.max[axis] = Math.max(target.max[axis], +box.max[axis]);
     }
     return target;
 }
-
 export class TrbGeometryProvider extends GeometryProvider {
     constructor(options) {
         super({ ...options, type: "trb" });
@@ -41,139 +29,73 @@ export class TrbGeometryProvider extends GeometryProvider {
         this.globalIdIndex = new Map();
         this.meshIndex = new Map();
     }
-
     async inspectViewerObjects() {
         const api = getAPI();
-        const diagnostic = {
-            modelId: this.modelId ?? null,
-            visibleGroupFound: false,
-            visibleRuntimeIdCount: 0,
-            runtimeIdSample: [],
-            externalIdSample: [],
-            aggregateViewerBoundingBox: null,
-            propertySamples: [],
-            errors: []
-        };
-        if (!api?.viewer || !this.modelId) return diagnostic;
-
+        const result = { modelId: this.modelId ?? null, visibleGroupFound: false, visibleRuntimeIdCount: 0, aggregateViewerBoundingBox: null, propertyClassCounts: {}, errors: [] };
+        if (!api?.viewer || !this.modelId) return result;
         try {
-            const groups = await api.viewer.getObjects({}, { visible: true });
-            const group = (groups || []).find(item => String(item.modelId) === String(this.modelId));
-            if (!group) return diagnostic;
-            diagnostic.visibleGroupFound = true;
-            const runtimeIds = (group.objects || []).map(item => Number(item.id)).filter(Number.isFinite);
-            diagnostic.visibleRuntimeIdCount = runtimeIds.length;
-            diagnostic.runtimeIdSample = runtimeIds.slice(0, MAX_RUNTIME_ID_SAMPLE);
-
-            for (let index = 0; index < runtimeIds.length; index += 250) {
-                try {
-                    const boxes = await api.viewer.getObjectBoundingBoxes(this.modelId, runtimeIds.slice(index, index + 250));
-                    for (const item of boxes || []) diagnostic.aggregateViewerBoundingBox = mergeBox(diagnostic.aggregateViewerBoundingBox, item.boundingBox);
-                }
-                catch (error) {
-                    diagnostic.errors.push({ stage: "bounding-boxes", message: error?.message || String(error) });
-                    break;
+            const group = (await api.viewer.getObjects({}, { visible: true }) || []).find(item => String(item.modelId) === String(this.modelId));
+            if (!group) return result;
+            result.visibleGroupFound = true;
+            const ids = (group.objects || []).map(item => Number(item.id)).filter(Number.isFinite);
+            result.visibleRuntimeIdCount = ids.length;
+            for (let i = 0; i < ids.length; i += 250) {
+                const boxes = await api.viewer.getObjectBoundingBoxes(this.modelId, ids.slice(i, i + 250));
+                for (const item of boxes || []) result.aggregateViewerBoundingBox = mergeBox(result.aggregateViewerBoundingBox, item.boundingBox);
+            }
+            if (ids.length) {
+                const props = await api.viewer.getObjectProperties(this.modelId, ids.slice(0, Math.min(ids.length, 100)));
+                for (const item of props || []) {
+                    const key = String(item?.class || "UNKNOWN");
+                    result.propertyClassCounts[key] = (result.propertyClassCounts[key] || 0) + 1;
                 }
             }
-
-            if (diagnostic.runtimeIdSample.length) {
-                try {
-                    diagnostic.externalIdSample = (await api.viewer.convertToObjectIds(this.modelId, diagnostic.runtimeIdSample) || []).map(String);
-                }
-                catch (error) {
-                    diagnostic.errors.push({ stage: "external-ids", message: error?.message || String(error) });
-                }
-                try {
-                    const properties = await api.viewer.getObjectProperties(this.modelId, diagnostic.runtimeIdSample.slice(0, MAX_PROPERTY_SAMPLE));
-                    diagnostic.propertySamples = (properties || []).map(item => ({
-                        class: item?.class ?? null,
-                        position: item?.position ? scalarFields(item.position) : null,
-                        product: item?.product ? scalarFields(item.product) : null,
-                        topLevelKeys: Object.keys(item || {}).sort()
-                    }));
-                }
-                catch (error) {
-                    diagnostic.errors.push({ stage: "properties", message: error?.message || String(error) });
-                }
-            }
-        }
-        catch (error) {
-            diagnostic.errors.push({ stage: "viewer-objects", message: error?.message || String(error) });
-        }
-        return diagnostic;
+        } catch (error) { result.errors.push(error?.message || String(error)); }
+        return result;
     }
-
     async open() {
         if (!this.file) {
             this.status = "discovered-no-blob";
-            this.metadata = {
-                providerVersion: TRB_GEOMETRY_PROVIDER_VERSION,
-                fileName: this.name || "",
-                modelId: this.modelId ?? null,
-                modelSpec: scalarFields(this.modelSpec),
-                note: "TRB-modellen er oppdaget, men Workspace API leverte ingen Blob i denne runden."
-            };
             return this.getSummary();
         }
-
-        this.status = "opening-diagnostic";
+        this.status = "opening-capability";
         this.error = null;
-        this.entities = [];
-        this.meshes = [];
-        this.globalIdIndex.clear();
-        this.meshIndex.clear();
-
         try {
             this.buffer = await this.file.arrayBuffer();
-            const bytes = new Uint8Array(this.buffer, 0, Math.min(SAMPLE_BYTES, this.buffer.byteLength));
-            const ascii = printable(bytes);
-            const identifier = ascii.match(/TRB\d/i)?.[0]?.toUpperCase() || null;
-            const converter = ascii.match(/TrimBimConverter/i)?.[0] || null;
+            const reader = TrimBimCapabilityReader.open(this.buffer);
             const viewer = await this.inspectViewerObjects();
+            const capability = reader.capabilityDiagnostic();
             const diagnostic = {
                 providerVersion: TRB_GEOMETRY_PROVIDER_VERSION,
-                purpose: "Generell TRB-kildediagnose for terreng, grunnlagsmodeller og fagmodeller.",
-                fileName: this.file?.name || this.name || "",
-                fileSize: this.file?.size ?? this.buffer.byteLength,
-                mimeType: this.file?.type || "",
+                localSdkCapabilityVersion: LOCAL_TRB_SDK_CAPABILITY_VERSION,
+                purpose: "TRB8 SDK-kapabilitetsdiagnose for generelle terreng-, grunnlags- og fagmodeller.",
+                fileName: this.file.name,
+                fileSize: this.file.size,
+                mimeType: this.file.type,
                 modelId: this.modelId ?? null,
                 origin: this.origin,
-                identifier,
-                looksLikeTrimBim: Boolean(identifier || converter),
-                converter,
-                firstBytesHex: byteHex(bytes),
-                printablePreview: ascii.slice(0, 512),
                 modelSpec: scalarFields(this.modelSpec),
+                capability,
                 viewer,
-                meshDecodingImplemented: false,
-                note: "v0.6.5b oppdager TRB-kilder via både getModels() og getTrimbimModels(). Trekantgeometri dekodes ikke ennå."
+                meshDecodingImplemented: false
             };
-
             this.metadata = diagnostic;
-            this.status = "ready-diagnostic";
-            console.log("===== GENERELL TRB-KILDEDIAGNOSE v0.6.5b =====");
+            this.status = capability.header.identifier === "TRB8" ? "ready-capability" : "unsupported-trb-version";
+            console.log("===== TRB8-SDK-CAPABILITY v0.6.5c =====");
             console.dir(diagnostic);
-
             if (typeof window !== "undefined") {
-                const existing = Array.isArray(window.__crossSectionTrbSourceDiagnostics) ? window.__crossSectionTrbSourceDiagnostics : [];
-                window.__crossSectionTrbSourceDiagnostics = [
-                    ...existing.filter(item => String(item.modelId) !== String(diagnostic.modelId)),
-                    diagnostic
-                ];
+                const list = Array.isArray(window.__crossSectionTrbSdkCapabilities) ? window.__crossSectionTrbSdkCapabilities : [];
+                window.__crossSectionTrbSdkCapabilities = [...list.filter(item => String(item.modelId) !== String(diagnostic.modelId)), diagnostic];
             }
-        }
-        catch (error) {
-            this.status = "diagnostic-error";
+        } catch (error) {
+            this.status = "capability-error";
             this.error = error?.message || String(error);
-            this.metadata = { providerVersion: TRB_GEOMETRY_PROVIDER_VERSION, fileName: this.file?.name || "", modelId: this.modelId ?? null, error: this.error };
-            console.error("GENERELL TRB-KILDEDIAGNOSE FEILET:", this.metadata, error);
+            console.error("TRB8-SDK-CAPABILITY FEILET:", error);
         }
         return this.getSummary();
     }
-
     getMeshesForGlobalIds() { return []; }
     getAllMeshes() { return []; }
-
     close() {
         this.buffer = null;
         this.globalIdIndex.clear();
