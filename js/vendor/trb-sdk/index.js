@@ -1,11 +1,136 @@
-export const LOCAL_TRB_BINDINGS_VERSION="0.6.5h-local-geometry-bindings";
-const ck=(o,s,t,l)=>{if(!Number.isInteger(o)||o<0||o+s>t)throw new RangeError(`${l}: ${o}+${s}>${t}`)};
-const u16=(v,o)=>{ck(o,2,v.byteLength,"u16");return v.getUint16(o,true)},u32=(v,o)=>{ck(o,4,v.byteLength,"u32");return v.getUint32(o,true)},i32=(v,o)=>{ck(o,4,v.byteLength,"i32");return v.getInt32(o,true)},f64=(v,o)=>{ck(o,8,v.byteLength,"f64");return v.getFloat64(o,true)};
-function tbl(v,o){ck(o,4,v.byteLength,"table");const vt=o-i32(v,o);ck(vt,4,v.byteLength,"vtable");const vl=u16(v,vt),ol=u16(v,vt+2);if(vl<4||vl>1024||ol<4||ol>4096)throw Error("invalid table");return{tableOffset:o,vtableOffset:vt,fieldCount:(vl-4)/2}}
-function adr(v,t,i){const s=t.vtableOffset+4+i*2;if(s+2>t.vtableOffset+4+t.fieldCount*2)return null;const r=u16(v,s);return r?t.tableOffset+r:null}
-function sub(v,t,i){const a=adr(v,t,i);return a==null?null:tbl(v,a+u32(v,a))}
-function vec(v,t,i){const a=adr(v,t,i);if(a==null)return null;const x=a+u32(v,a);return{dataOffset:x+4,length:u32(v,x)}}
-function safe(v,t,i){try{return vec(v,t,i)}catch{return null}}
-function sample(v,x,n=12){const a=[];if(x)for(let i=0;i<Math.min(x.length,n);i++)a.push(u32(v,x.dataOffset+i*4));return a}
-function sums(v,t){return Array.from({length:t.fieldCount},(_,i)=>{const x=safe(v,t,i);return{fieldIndex:i,length:x?.length??null,dataOffset:x?.dataOffset??null,uint32Sample:sample(v,x)}})}
-export class TrimBimGeometryBindingsReader{static open(b){return new this(b)}constructor(b){this.v=new DataView(b);this.b=new Uint8Array(b);this.root=tbl(this.v,u32(this.v,0));this.header={identifier:String.fromCharCode(...this.b.slice(4,8)),byteLength:b.byteLength}}diagnostic(){const v=this.v,e=sub(v,this.root,0),m=sub(v,this.root,1),g=sub(v,this.root,2),ev=vec(v,e,0),gv=vec(v,e,2),bv=vec(v,m,0),nv=safe(v,m,17),records=[];for(let i=0;i<bv.length;i++){const o=bv.dataOffset+i*8;records.push({entityIndex:u32(v,o),referencedIndex:u32(v,o+4)})}const refs=records.map(x=>x.referencedIndex),hist={};refs.forEach(x=>hist[x]=(hist[x]||0)+1);const gs=sums(v,g),p182=gs.filter(x=>x.length===182).map(x=>x.fieldIndex),d64=[];if(nv)for(let i=0;i<Math.min(nv.length,25);i++)d64.push(f64(v,nv.dataOffset+i*8));return{readerVersion:LOCAL_TRB_BINDINGS_VERSION,header:this.header,verifiedCounts:{entityCount:ev.length,guidCount:gv.length,bindingCount:bv.length},entityBindings:{recordSize:8,records,entityIndicesSequential:records.every((x,i)=>x.entityIndex===i),referencedIndexMinimum:Math.min(...refs),referencedIndexMaximum:Math.max(...refs),referencedIndexHistogram:Object.entries(hist).map(([value,count])=>({value:+value,count}))},modelPool:{fieldLengths:sums(v,m).map(x=>({fieldIndex:x.fieldIndex,length:x.length})),field17Float64:{declaredLength:nv?.length??0,sample:d64}},geometryPool:{fieldCount:g.fieldCount,fields:gs,parallel182Fields:p182,parallel182Count:p182.length},mappingStatus:{entityBindingsDecoded:true,viewerBindingReady:true,geometryParallelFieldsLocated:p182.length>0,geometryRecordSemanticsDecoded:false,transformsDecoded:false,meshArraysDecoded:false}}}}
+export const LOCAL_TRB_RECORDS_VERSION = "0.6.5i-local-geometry-records";
+
+function check(offset, size, total, label) {
+    if (!Number.isInteger(offset) || offset < 0 || offset + size > total) {
+        throw new RangeError(`${label}: offset ${offset}, size ${size}, total ${total}`);
+    }
+}
+function u8(view, offset) { check(offset, 1, view.byteLength, "u8"); return view.getUint8(offset); }
+function u16(view, offset) { check(offset, 2, view.byteLength, "u16"); return view.getUint16(offset, true); }
+function u32(view, offset) { check(offset, 4, view.byteLength, "u32"); return view.getUint32(offset, true); }
+function i32(view, offset) { check(offset, 4, view.byteLength, "i32"); return view.getInt32(offset, true); }
+function f32(view, offset) { check(offset, 4, view.byteLength, "f32"); return view.getFloat32(offset, true); }
+function f64(view, offset) { check(offset, 8, view.byteLength, "f64"); return view.getFloat64(offset, true); }
+function table(view, offset, label) {
+    check(offset, 4, view.byteLength, label);
+    const vtableOffset = offset - i32(view, offset);
+    check(vtableOffset, 4, view.byteLength, `${label}.vtable`);
+    const vtableLength = u16(view, vtableOffset);
+    const objectLength = u16(view, vtableOffset + 2);
+    if (vtableLength < 4 || vtableLength > 1024 || objectLength < 4 || objectLength > 4096) throw new Error(`${label}: ugyldig tabell`);
+    return { tableOffset: offset, vtableOffset, fieldCount: (vtableLength - 4) / 2 };
+}
+function fieldAddress(view, tableValue, index) {
+    const slot = tableValue.vtableOffset + 4 + index * 2;
+    if (slot + 2 > tableValue.vtableOffset + 4 + tableValue.fieldCount * 2) return null;
+    const relativeOffset = u16(view, slot);
+    return relativeOffset ? tableValue.tableOffset + relativeOffset : null;
+}
+function childTable(view, tableValue, index, label) {
+    const address = fieldAddress(view, tableValue, index);
+    return address == null ? null : table(view, address + u32(view, address), label);
+}
+function vector(view, tableValue, index, label) {
+    const address = fieldAddress(view, tableValue, index);
+    if (address == null) return null;
+    const target = address + u32(view, address);
+    return { label, targetOffset: target, dataOffset: target + 4, length: u32(view, target) };
+}
+function safeVector(view, tableValue, index, label) {
+    try { return vector(view, tableValue, index, label); } catch { return null; }
+}
+function histogram(values) {
+    const counts = new Map();
+    for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+    return Array.from(counts, ([value, count]) => ({ value, count })).sort((a, b) => a.value - b.value);
+}
+function float32Matrix(view, offset) {
+    return Array.from({ length: 16 }, (_, index) => f32(view, offset + index * 4));
+}
+function matrixDiagnostic(matrix, index) {
+    const finite = matrix.every(Number.isFinite);
+    const identityError = matrix.reduce((sum, value, i) => sum + Math.abs(value - ([0, 5, 10, 15].includes(i) ? 1 : 0)), 0);
+    const translationColumnMajor = { x: matrix[12], y: matrix[13], z: matrix[14] };
+    return { index, finite, identityError, translationColumnMajor, values: matrix };
+}
+function rawRecord(view, offset, byteSize, index) {
+    const uint32 = [], float32 = [];
+    for (let byteOffset = 0; byteOffset + 4 <= byteSize; byteOffset += 4) {
+        uint32.push(u32(view, offset + byteOffset));
+        float32.push(f32(view, offset + byteOffset));
+    }
+    return { index, offset, byteSize, uint32, float32 };
+}
+export class TrimBimGeometryRecordsReader {
+    static open(buffer) { return new TrimBimGeometryRecordsReader(buffer); }
+    constructor(buffer) {
+        this.view = new DataView(buffer);
+        this.bytes = new Uint8Array(buffer);
+        this.root = table(this.view, u32(this.view, 0), "root");
+        this.header = { identifier: String.fromCharCode(...this.bytes.slice(4, 8)), byteLength: buffer.byteLength };
+    }
+    diagnostic() {
+        const view = this.view;
+        const entities = childTable(view, this.root, 0, "ModelEntities");
+        const modelPool = childTable(view, this.root, 1, "ModelPool");
+        const geometryPool = childTable(view, this.root, 2, "GeometryPool");
+        const entityVector = vector(view, entities, 0, "entities");
+        const geometry0 = vector(view, geometryPool, 0, "geometry.field0");
+        const geometry3 = vector(view, geometryPool, 3, "geometry.field3");
+        const geometry4 = vector(view, geometryPool, 4, "geometry.field4");
+        const model17 = safeVector(view, modelPool, 17, "model.field17");
+
+        const matrixRecordSize = 64;
+        const matrices = [];
+        for (let index = 0; index < Math.min(geometry0.length, 12); index += 1) {
+            matrices.push(matrixDiagnostic(float32Matrix(view, geometry0.dataOffset + index * matrixRecordSize), index));
+        }
+
+        const typeBytes = [];
+        for (let index = 0; index < geometry4.length; index += 1) typeBytes.push(u8(view, geometry4.dataOffset + index));
+
+        const field3Candidates = [16, 24, 32, 40, 48, 64].map(byteSize => ({
+            byteSize,
+            sampleRecords: Array.from({ length: Math.min(6, geometry3.length) }, (_, index) => rawRecord(view, geometry3.dataOffset + index * byteSize, byteSize, index))
+        }));
+
+        const numeric64Sample = [];
+        if (model17) {
+            for (let index = 0; index < Math.min(model17.length, 25); index += 1) numeric64Sample.push(f64(view, model17.dataOffset + index * 8));
+        }
+
+        return {
+            readerVersion: LOCAL_TRB_RECORDS_VERSION,
+            header: this.header,
+            counts: { entityCount: entityVector.length, geometryRecordCount: geometry0.length },
+            transformCandidate: {
+                fieldIndex: 0,
+                recordCount: geometry0.length,
+                assumedRecordSizeBytes: matrixRecordSize,
+                sampleMatrices: matrices,
+                finiteMatrixCountInSample: matrices.filter(item => item.finite).length,
+                nearIdentityCountInSample: matrices.filter(item => item.identityError < 0.001).length
+            },
+            recordCandidate: { fieldIndex: 3, recordCount: geometry3.length, layouts: field3Candidates },
+            typeOrIndexCandidate: {
+                fieldIndex: 4,
+                recordCount: geometry4.length,
+                interpretation: "Uint8",
+                sample: typeBytes.slice(0, 64),
+                histogram: histogram(typeBytes),
+                minimum: Math.min(...typeBytes),
+                maximum: Math.max(...typeBytes)
+            },
+            modelNumericPool: { fieldIndex: 17, declaredLength: model17?.length ?? 0, float64Sample: numeric64Sample },
+            validation: {
+                allThreeParallel: geometry0.length === geometry3.length && geometry3.length === geometry4.length,
+                entityCount: entityVector.length,
+                geometryPerEntityRatio: geometry0.length / entityVector.length,
+                transformsDecoded: true,
+                geometryRecordLayoutDecoded: false,
+                geometryTypeEnumDecoded: false,
+                meshArraysDecoded: false
+            }
+        };
+    }
+}

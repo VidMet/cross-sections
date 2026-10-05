@@ -1,3 +1,44 @@
-import{GeometryProvider}from"./geometry-provider.js";import{getAPI}from"../tc-api.js";import{TrimBimGeometryBindingsReader,LOCAL_TRB_BINDINGS_VERSION}from"../vendor/trb-sdk/index.js?v=0.6.5h";
-export const TRB_GEOMETRY_PROVIDER_VERSION="0.6.5h-trb8-geometry-bindings";
-export class TrbGeometryProvider extends GeometryProvider{constructor(o){super({...o,type:"trb"});this.buffer=null}async viewer(){const a=getAPI(),r={runtimeIds:[],externalIds:[],errors:[]};try{const g=(await a.viewer.getObjects({}, {visible:true})||[]).find(x=>String(x.modelId)===String(this.modelId));r.runtimeIds=(g?.objects||[]).map(x=>+x.id);r.externalIds=await a.viewer.convertToObjectIds(this.modelId,r.runtimeIds)}catch(e){r.errors.push(e.message)}return r}async open(){if(!this.file){this.status="discovered-no-blob";return this.getSummary()}try{this.buffer=await this.file.arrayBuffer();const bindings=TrimBimGeometryBindingsReader.open(this.buffer).diagnostic(),viewer=await this.viewer();bindings.entityBindings.records=bindings.entityBindings.records.map((x,i)=>({...x,runtimeId:viewer.runtimeIds[i]??null,externalId:viewer.externalIds[i]??null}));const d={providerVersion:TRB_GEOMETRY_PROVIDER_VERSION,localReaderVersion:LOCAL_TRB_BINDINGS_VERSION,fileName:this.file.name,fileSize:this.file.size,modelId:this.modelId,bindings,viewer:{visibleRuntimeIdCount:viewer.runtimeIds.length,externalIdCount:viewer.externalIds.length,errors:viewer.errors},entityViewerDelta:bindings.verifiedCounts.entityCount-viewer.runtimeIds.length,meshDecodingImplemented:false};this.metadata=d;this.entities=bindings.entityBindings.records;this.status="ready-bindings";console.log("===== TRB8-GEOMETRY-BINDINGS v0.6.5h =====");console.dir(d);window.__crossSectionTrbGeometryBindings=[d]}catch(e){this.status="bindings-error";this.error=e.message;console.error(e)}return this.getSummary()}getMeshesForGlobalIds(){return[]}getAllMeshes(){return[]}close(){this.buffer=null;super.close()}}
+import { GeometryProvider } from "./geometry-provider.js";
+import { getAPI } from "../tc-api.js";
+import { TrimBimGeometryRecordsReader, LOCAL_TRB_RECORDS_VERSION } from "../vendor/trb-sdk/index.js?v=0.6.5i";
+export const TRB_GEOMETRY_PROVIDER_VERSION = "0.6.5i-trb8-geometry-records";
+export class TrbGeometryProvider extends GeometryProvider {
+    constructor(options) { super({ ...options, type: "trb" }); this.buffer = null; this.globalIdIndex = new Map(); this.meshIndex = new Map(); }
+    async viewerDiagnostic() {
+        const api = getAPI(), result = { runtimeIds: [], externalIds: [], errors: [] };
+        try {
+            const group = (await api.viewer.getObjects({}, { visible: true }) || []).find(item => String(item.modelId) === String(this.modelId));
+            result.runtimeIds = (group?.objects || []).map(item => Number(item.id)).filter(Number.isFinite);
+            result.externalIds = await api.viewer.convertToObjectIds(this.modelId, result.runtimeIds);
+        } catch (error) { result.errors.push(error?.message || String(error)); }
+        return result;
+    }
+    async open() {
+        if (!this.file) { this.status = "discovered-no-blob"; return this.getSummary(); }
+        this.status = "opening-records"; this.error = null;
+        try {
+            this.buffer = await this.file.arrayBuffer();
+            const records = TrimBimGeometryRecordsReader.open(this.buffer).diagnostic();
+            const viewer = await this.viewerDiagnostic();
+            const diagnostic = {
+                providerVersion: TRB_GEOMETRY_PROVIDER_VERSION,
+                localReaderVersion: LOCAL_TRB_RECORDS_VERSION,
+                fileName: this.file.name,
+                fileSize: this.file.size,
+                modelId: this.modelId,
+                records,
+                viewer: { visibleRuntimeIdCount: viewer.runtimeIds.length, externalIdCount: viewer.externalIds.length, errors: viewer.errors },
+                meshDecodingImplemented: false
+            };
+            this.metadata = diagnostic;
+            this.status = "ready-records";
+            console.log("===== TRB8-GEOMETRY-RECORDS v0.6.5i =====");
+            console.dir(diagnostic);
+            window.__crossSectionTrbGeometryRecords = [diagnostic];
+        } catch (error) { this.status = "records-error"; this.error = error?.message || String(error); console.error("TRB8-GEOMETRY-RECORDS FEILET:", error); }
+        return this.getSummary();
+    }
+    getMeshesForGlobalIds() { return []; }
+    getAllMeshes() { return []; }
+    close() { this.buffer = null; this.globalIdIndex.clear(); this.meshIndex.clear(); super.close(); }
+}

@@ -1,1 +1,3 @@
-v0.6.5h contains a project-specific FlatBuffers geometry-binding diagnostic. No upstream @speckle/trb-sdk implementation is redistributed.
+v0.6.5i contains a project-specific FlatBuffers geometry-record diagnostic.
+It does not redistribute the upstream @speckle/trb-sdk implementation.
+The 182-entry fields are interpreted only as diagnostic candidates; no mesh is emitted yet.
