@@ -1,4 +1,4 @@
-export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3b";
+export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3c";
 
 function coreBase(location) {
     const value = String(location || "").toLowerCase();
@@ -69,7 +69,13 @@ export async function downloadOriginalIfc({ api, models, registry, renderSources
             ];
             let downloadUrl = null;
             for (const [name, url] of urls) {
-                try { const data = await compact(await fetch(url, { headers })); result.requests.push({ name, ...data }); downloadUrl ||= findUrl(data.body); }
+                try {
+                    const data = await compact(await fetch(url, { headers }));
+                    result.requests.push({ name, ...data });
+                    if (name === "download-url") {
+                        downloadUrl = typeof data.body?.url === "string" ? data.body.url : findUrl(data.body);
+                    }
+                }
                 catch (error) { result.requests.push({ name, error: error?.message || String(error) }); }
             }
             if (downloadUrl) {
@@ -88,7 +94,7 @@ export async function downloadOriginalIfc({ api, models, registry, renderSources
             diagnostic.models.push(result);
         }
     } catch (error) { diagnostic.error = error?.message || String(error); diagnostic.errorName = error?.name || "Error"; }
-    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3b =====");
+    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3c =====");
     console.dir(diagnostic);
     window.__crossSectionOriginalIfcDownloadDiagnostic = diagnostic;
     return diagnostic;
