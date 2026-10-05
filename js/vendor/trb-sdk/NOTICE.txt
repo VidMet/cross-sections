@@ -1,4 +1,3 @@
-v0.6.5c contains a local, project-specific TRB8 FlatBuffers capability probe.
+v0.6.5d contains a local project-specific FlatBuffers structure diagnostic.
 It does not redistribute the upstream @speckle/trb-sdk implementation.
-The upstream project is AGPL-3.0 and is documented at https://github.com/specklesystems/trb-sdk.
-Full geometry decoding remains disabled in this diagnostic version.
+No semantic table labels or geometry arrays are claimed without verified schema mapping.
