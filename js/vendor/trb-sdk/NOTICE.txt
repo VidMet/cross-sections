@@ -1,1 +1,1 @@
-v0.6.5l contains a project-specific mesh-array diagnostic. It decodes candidate position, normal, UV, packed vertex and index arrays but does not yet emit geometry to the section engine. No upstream implementation is redistributed.
+v0.6.5k contains a project-specific mesh-pool mapping diagnostic. It maps the three non-empty mesh pools and decodes mesh table vector lengths, but does not yet emit mesh arrays. No upstream implementation is redistributed.
