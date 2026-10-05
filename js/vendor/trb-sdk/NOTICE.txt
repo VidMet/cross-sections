@@ -1,4 +1,4 @@
-v0.6.5f contains a project-specific FlatBuffers reader.
-ModelEntities is mapped from the public trimbim-v8.fbs schema.
-Root fields 1 and 2 are intentionally reported as geometry-pool candidates until their exact declarations are verified.
-No upstream @speckle/trb-sdk implementation is redistributed.
+v0.6.5g contains a project-specific FlatBuffers instance-mapping diagnostic.
+It does not redistribute the upstream @speckle/trb-sdk implementation.
+Field 0 of root pool 1 is treated only as an entity-parallel candidate because its length equals ModelEntities.entities.
+No instance, geometry, transform, or material field names are asserted until validated against Viewer data and pool bounds.
