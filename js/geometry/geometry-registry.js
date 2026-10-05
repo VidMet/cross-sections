@@ -1,8 +1,8 @@
-import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.5a";
-import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.5a";
+import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.5b";
+import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.5b";
 import { getAPI } from "../tc-api.js";
 
-export const GEOMETRY_REGISTRY_VERSION = "0.6.5a-general-trb-source-diagnostic";
+export const GEOMETRY_REGISTRY_VERSION = "0.6.5b-trb-discovery-fix";
 
 function extension(name) {
     return (String(name || "").split(".").pop() || "").toLowerCase();
@@ -19,22 +19,27 @@ function normalizedSourceKey(name) {
 
 function modelIdentity(model) {
     return String(
-        model?.modelId ||
-        model?.id ||
-        model?.fileId ||
-        model?.versionId ||
-        ""
+        model?.modelId || model?.id || model?.fileId || model?.versionId ||
+        model?.trbBlobFromId || ""
     );
 }
 
 function modelName(model) {
     const id = modelIdentity(model);
     return String(
-        model?.name ||
-        model?.fileName ||
-        model?.displayName ||
-        `${id}.unknown`
+        model?.name || model?.fileName || model?.displayName ||
+        model?.file?.name || `${id}.trb`
     );
+}
+
+function scalarFields(value) {
+    if (!value || typeof value !== "object") return {};
+    const output = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (item === null || ["string", "number", "boolean"].includes(typeof item)) output[key] = item;
+        else if (item instanceof Blob) output[key] = { type: "Blob", size: item.size, mimeType: item.type };
+    }
+    return output;
 }
 
 function base64ToBlob(value) {
@@ -45,9 +50,16 @@ function base64ToBlob(value) {
     return new Blob([bytes], { type: "application/octet-stream" });
 }
 
+function blobFromValue(value) {
+    if (value instanceof Blob) return value;
+    if (typeof value === "string" && value.length > 100) {
+        try { return base64ToBlob(value); } catch { return null; }
+    }
+    return null;
+}
+
 function loadedModelFile(loaded, fallbackName) {
-    let blob = loaded?.blob;
-    if (typeof blob === "string") blob = base64ToBlob(blob);
+    const blob = blobFromValue(loaded?.blob) || blobFromValue(loaded?.trbBlob);
     if (!(blob instanceof Blob)) return null;
     return new File(
         [blob],
@@ -58,155 +70,220 @@ function loadedModelFile(loaded, fallbackName) {
 
 function sourceOrigin(provider) {
     if (provider.origin === "viewer-original-ifc") return provider.origin;
-    if (provider.modelId && provider.file) return "viewer+diagnostic";
+    if (provider.type === "trb" && provider.modelId && provider.file) return "viewer+diagnostic";
     if (provider.modelId) return "viewer";
     if (provider.file) return "local";
     return "detached";
+}
+
+function mergeModel(target, source, discoverySource) {
+    const id = modelIdentity(source);
+    if (!id) return;
+    const previous = target.get(id) || { id, discoverySources: [] };
+    previous.discoverySources = [...new Set([...previous.discoverySources, discoverySource])];
+    previous.model = { ...(previous.model || {}), ...source };
+    previous.name = modelName(source) || previous.name || `${id}.trb`;
+    target.set(id, previous);
 }
 
 export class GeometryRegistry {
     constructor() {
         this.providers = [];
         this.counter = 1;
-        this.trbDiscoveryStarted = false;
-        this.trbDiscoveryTimer = null;
-        this.startGeneralTrbDiscovery();
+        this.discoveryInProgress = false;
+        this.bindManualRefreshDiscovery();
     }
 
     create(options) {
         const fileExtension = extension(options.name);
         const id = options.id || `source-${this.counter++}`;
         if (fileExtension === "ifc") return new IfcGeometryProvider({ ...options, id });
-        if (["trb", "trimbim"].includes(fileExtension)) return new TrbGeometryProvider({ ...options, id });
+        if (["trb", "trimbim"].includes(fileExtension) || options.forceType === "trb") {
+            return new TrbGeometryProvider({ ...options, id, name: options.name || `${id}.trb` });
+        }
         return null;
     }
 
     findBySource(name, type) {
         const key = normalizedSourceKey(name);
         return this.providers.find(provider =>
-            normalizedSourceKey(provider.name) === key &&
-            provider.type === type
+            normalizedSourceKey(provider.name) === key && provider.type === type
         );
     }
 
-    async discoverVisibleTrbModels() {
-        const api = getAPI();
-        if (!api?.viewer || typeof api.viewer.getModels !== "function") return null;
-
-        let models = await api.viewer.getModels();
-        if (!Array.isArray(models)) models = [];
-
-        let visibleIds = null;
-        try {
-            const groups = await api.viewer.getObjects({}, { visible: true });
-            visibleIds = new Set((groups || []).map(group => String(group.modelId)));
-        }
-        catch {
-            visibleIds = null;
-        }
-
-        const trbModels = models.filter(model => {
-            const name = modelName(model);
-            const id = modelIdentity(model);
-            return ["trb", "trimbim"].includes(extension(name)) &&
-                (!visibleIds || visibleIds.has(id));
-        });
-
-        const seen = new Set();
-        const diagnostic = {
-            version: GEOMETRY_REGISTRY_VERSION,
-            discoveredCount: trbModels.length,
-            openedCount: 0,
-            failedCount: 0,
-            models: []
+    bindManualRefreshDiscovery() {
+        const bind = () => {
+            const button = document.getElementById("btnRefreshModels");
+            if (!button) {
+                setTimeout(bind, 250);
+                return;
+            }
+            if (button.dataset.trbDiscoveryBound === "true") return;
+            button.dataset.trbDiscoveryBound = "true";
+            button.addEventListener("click", () => {
+                setTimeout(async () => {
+                    await this.discoverVisibleTrbModels({ reason: "manual-refresh" });
+                }, 0);
+            });
         };
-
-        for (const model of trbModels) {
-            const modelId = modelIdentity(model);
-            const name = modelName(model);
-            seen.add(modelId);
-
-            let provider = this.providers.find(item =>
-                item.type === "trb" && String(item.modelId || "") === modelId
-            );
-
-            if (!provider) {
-                provider = this.create({
-                    id: `viewer-trb-${modelId}`,
-                    name,
-                    origin: "viewer-trb-diagnostic",
-                    modelId,
-                    modelSpec: model
-                });
-                if (provider) this.providers.push(provider);
-            }
-
-            if (!provider) continue;
-            provider.modelId = modelId;
-            provider.modelSpec = model;
-            provider.name = name;
-            provider.origin = "viewer-trb-diagnostic";
-
-            try {
-                if (!provider.file && typeof api.viewer.getLoadedModel === "function") {
-                    const loaded = await api.viewer.getLoadedModel(modelId);
-                    const file = loadedModelFile(loaded, name);
-                    if (file) {
-                        provider.attachFile(file);
-                        provider.fileOrigin = "viewer-loaded-model";
-                    }
-                }
-
-                if (provider.file && provider.status !== "ready-diagnostic") {
-                    await provider.open();
-                }
-
-                if (provider.status === "ready-diagnostic") diagnostic.openedCount += 1;
-                else diagnostic.failedCount += 1;
-
-                diagnostic.models.push({
-                    modelId,
-                    name,
-                    status: provider.status,
-                    fileSize: provider.file?.size || 0
-                });
-            }
-            catch (error) {
-                provider.status = "diagnostic-error";
-                provider.error = error?.message || String(error);
-                diagnostic.failedCount += 1;
-                diagnostic.models.push({ modelId, name, status: provider.status, error: provider.error });
-            }
-        }
-
-        for (const provider of [...this.providers]) {
-            if (provider.type !== "trb" || !String(provider.origin).includes("viewer-trb")) continue;
-            if (!seen.has(String(provider.modelId || ""))) this.remove(provider.id);
-        }
-
-        console.log("===== SYNLIGE TRB-KILDER v0.6.5a =====");
-        console.dir(diagnostic);
-        if (typeof window !== "undefined") window.__crossSectionTrbRegistryDiagnostic = diagnostic;
-        window.dispatchEvent(new CustomEvent("cross-section-geometry-updated", { detail: diagnostic }));
-        return diagnostic;
+        bind();
     }
 
-    startGeneralTrbDiscovery() {
-        if (this.trbDiscoveryStarted) return;
-        this.trbDiscoveryStarted = true;
-        let attempts = 0;
-        const tick = async () => {
-            attempts += 1;
-            try {
-                const result = await this.discoverVisibleTrbModels();
-                if (result || attempts >= 30) return;
+    async collectModels(api) {
+        const collected = new Map();
+        const calls = [];
+
+        if (typeof api.viewer.getModels === "function") {
+            calls.push((async () => {
+                try {
+                    const models = await api.viewer.getModels();
+                    for (const model of Array.isArray(models) ? models : []) mergeModel(collected, model, "getModels");
+                    return { source: "getModels", ok: true, count: Array.isArray(models) ? models.length : 0 };
+                }
+                catch (error) {
+                    return { source: "getModels", ok: false, error: error?.message || String(error) };
+                }
+            })());
+        }
+
+        if (typeof api.viewer.getTrimbimModels === "function") {
+            calls.push((async () => {
+                try {
+                    const models = await api.viewer.getTrimbimModels();
+                    for (const model of Array.isArray(models) ? models : []) mergeModel(collected, model, "getTrimbimModels");
+                    return { source: "getTrimbimModels", ok: true, count: Array.isArray(models) ? models.length : 0 };
+                }
+                catch (error) {
+                    return { source: "getTrimbimModels", ok: false, error: error?.message || String(error) };
+                }
+            })());
+        }
+
+        const callResults = await Promise.all(calls);
+        return { collected, callResults };
+    }
+
+    async discoverVisibleTrbModels({ reason = "direct" } = {}) {
+        if (this.discoveryInProgress) return null;
+        this.discoveryInProgress = true;
+
+        try {
+            const api = getAPI();
+            if (!api?.viewer) return null;
+
+            const groups = await api.viewer.getObjects({}, { visible: true });
+            const visibleIds = new Set((groups || []).map(group => String(group.modelId)));
+            const { collected, callResults } = await this.collectModels(api);
+
+            const candidates = [];
+            for (const record of collected.values()) {
+                const model = record.model || {};
+                const id = String(record.id || "");
+                const name = String(record.name || modelName(model));
+                const isTrbByName = ["trb", "trimbim"].includes(extension(name));
+                const isTrimbimRecord = record.discoverySources.includes("getTrimbimModels");
+                const explicitlyVisible = model.visible === true;
+                const visible = visibleIds.has(id) || explicitlyVisible;
+                if (visible && (isTrbByName || isTrimbimRecord)) {
+                    candidates.push({ ...record, id, name, isTrbByName, isTrimbimRecord, visible });
+                }
             }
-            catch (error) {
-                if (attempts >= 30) console.warn("TRB-kildediagnose kunne ikke startes:", error);
+
+            const seen = new Set();
+            const diagnostic = {
+                version: GEOMETRY_REGISTRY_VERSION,
+                reason,
+                viewerMethods: Object.keys(api.viewer).filter(key => typeof api.viewer[key] === "function").sort(),
+                discoveryCalls: callResults,
+                visibleGroupIds: [...visibleIds],
+                collectedCount: collected.size,
+                discoveredCount: candidates.length,
+                openedCount: 0,
+                failedCount: 0,
+                models: []
+            };
+
+            for (const candidate of candidates) {
+                const { id: modelId, name, model } = candidate;
+                seen.add(modelId);
+
+                let provider = this.providers.find(item =>
+                    item.type === "trb" && String(item.modelId || "") === modelId
+                );
+
+                if (!provider) {
+                    provider = this.create({
+                        id: `viewer-trb-${modelId}`,
+                        name,
+                        origin: "viewer-trb-diagnostic",
+                        modelId,
+                        modelSpec: model,
+                        forceType: "trb"
+                    });
+                    if (provider) this.providers.push(provider);
+                }
+                if (!provider) continue;
+
+                provider.modelId = modelId;
+                provider.modelSpec = model;
+                provider.name = name;
+                provider.origin = "viewer-trb-diagnostic";
+
+                try {
+                    if (!provider.file) {
+                        let file = loadedModelFile(model, name);
+                        if (!file && typeof api.viewer.getLoadedModel === "function") {
+                            try {
+                                const loaded = await api.viewer.getLoadedModel(modelId);
+                                file = loadedModelFile(loaded, name);
+                            }
+                            catch (error) {
+                                diagnostic.models.push({ modelId, name, stage: "getLoadedModel", warning: error?.message || String(error) });
+                            }
+                        }
+                        if (file) {
+                            provider.attachFile(file);
+                            provider.fileOrigin = "viewer-loaded-model";
+                        }
+                    }
+
+                    if (provider.file && provider.status !== "ready-diagnostic") await provider.open();
+                    if (provider.status === "ready-diagnostic") diagnostic.openedCount += 1;
+                    else diagnostic.failedCount += 1;
+
+                    diagnostic.models.push({
+                        modelId,
+                        name,
+                        discoverySources: candidate.discoverySources,
+                        isTrbByName: candidate.isTrbByName,
+                        isTrimbimRecord: candidate.isTrimbimRecord,
+                        modelFields: scalarFields(model),
+                        status: provider.status,
+                        fileSize: provider.file?.size || 0
+                    });
+                }
+                catch (error) {
+                    provider.status = "diagnostic-error";
+                    provider.error = error?.message || String(error);
+                    diagnostic.failedCount += 1;
+                    diagnostic.models.push({ modelId, name, status: provider.status, error: provider.error });
+                }
             }
-            this.trbDiscoveryTimer = setTimeout(tick, 500);
-        };
-        this.trbDiscoveryTimer = setTimeout(tick, 0);
+
+            for (const provider of [...this.providers]) {
+                if (provider.type !== "trb" || !String(provider.origin).includes("viewer-trb")) continue;
+                if (!seen.has(String(provider.modelId || ""))) this.remove(provider.id);
+            }
+
+            console.log("===== TRB-OPPDAGELSE v0.6.5b =====");
+            console.dir(diagnostic);
+            if (typeof window !== "undefined") window.__crossSectionTrbRegistryDiagnostic = diagnostic;
+            window.dispatchEvent(new CustomEvent("cross-section-geometry-updated", { detail: diagnostic }));
+            return diagnostic;
+        }
+        finally {
+            this.discoveryInProgress = false;
+        }
     }
 
     async addLocalFiles(files, onProgress) {
