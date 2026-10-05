@@ -1,4 +1,4 @@
-export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3d";
+export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3e";
 
 function coreBase(location) {
     const value = String(location || "").toLowerCase();
@@ -85,16 +85,47 @@ export async function downloadOriginalIfc({ api, models, registry, renderSources
                     const check = await signature(blob, fileName);
                     result.download = { ok: response.ok, status: response.status, url: safeUrl(response.url), signature: check };
                     if (response.ok && check.validIfcStep) {
-                        await registry.addLocalFiles([new File([blob], fileName, { type: blob.type || "application/octet-stream" })], renderSources);
+                        const existingProviderIds = new Set((registry.providers || []).map(provider => String(provider.id)));
+                        const originalIfcFile = new File([blob], fileName, {
+                            type: blob.type || "application/octet-stream",
+                            lastModified: Date.now()
+                        });
+                        await registry.addLocalFiles([originalIfcFile], renderSources);
+                        const addedProviders = (registry.providers || []).filter(provider => !existingProviderIds.has(String(provider.id)));
+                        const linkedProvider = [...addedProviders].reverse().find(provider =>
+                            provider?.type === "ifc" && provider?.file?.name === fileName
+                        ) || [...addedProviders].reverse().find(provider => provider?.type === "ifc");
+                        if (!linkedProvider) {
+                            throw new Error(`Original IFC ble dekodet, men ny IFC-provider ble ikke funnet for ${fileName}`);
+                        }
+                        linkedProvider.modelId = versionId || fileId;
+                        linkedProvider.origin = "viewer-original-ifc";
+                        linkedProvider.fileOrigin = "trimble-connect-original";
+                        linkedProvider.metadata = {
+                            ...(linkedProvider.metadata || {}),
+                            trimbleProjectId: projectId,
+                            trimbleFileId: fileId,
+                            trimbleVersionId: versionId,
+                            linkedViewerModelId: versionId || fileId,
+                            sourceMethod: "trimble-connect-original-download"
+                        };
                         renderSources?.();
                         result.attached = true;
+                        result.linkedProvider = {
+                            id: linkedProvider.id,
+                            type: linkedProvider.type,
+                            modelId: linkedProvider.modelId,
+                            origin: linkedProvider.origin,
+                            fileOrigin: linkedProvider.fileOrigin,
+                            name: linkedProvider.name || linkedProvider.file?.name || fileName
+                        };
                     }
                 } catch (error) { result.download = { error: error?.message || String(error), url: safeUrl(downloadUrl) }; }
             }
             diagnostic.models.push(result);
         }
     } catch (error) { diagnostic.error = error?.message || String(error); diagnostic.errorName = error?.name || "Error"; }
-    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3d =====");
+    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3e =====");
     console.dir(diagnostic);
     window.__crossSectionOriginalIfcDownloadDiagnostic = diagnostic;
     return diagnostic;

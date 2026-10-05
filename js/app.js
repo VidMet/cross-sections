@@ -1,9 +1,9 @@
-import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3d";
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3e";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
-import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3d";
-import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3d";
-import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3d";
-import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3d";
+import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3e";
+import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3e";
+import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3e";
+import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3e";
 
 const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4i-mirrored-offset";
 const R = new GeometryRegistry();
@@ -96,7 +96,7 @@ async function logTrimbleFileMetadataDiagnostic(models) {
             });
         } catch (error) { diagnostic.loadedModels.push({ modelId, error: error?.message || String(error) }); }
     }
-    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3d", diagnostic);
+    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3e", diagnostic);
     window.__crossSectionTrimbleFileMetadataDiagnostic = diagnostic;
     return diagnostic;
 }
@@ -274,7 +274,7 @@ function bind() {
 async function init() {
     $("versionInfo").textContent = "v" + VERSION; $("buildInfo").textContent = BUILD_DATE;
     bind(); renderSources();
-    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3d" });
+    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3e" });
     await connectTC(); await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
     console.log(APP_NAME, VERSION);
