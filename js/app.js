@@ -1,13 +1,13 @@
-import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3f";
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.4d";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
-import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3f";
-import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3f";
-import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3f";
-import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3f";
+import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.4d";
+import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.4d";
+import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.4d";
+import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.4d";
 
 const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4i-mirrored-offset";
 const R = new GeometryRegistry();
-const S = { points: [], selected: null, station: 0, frame: null, marker: null, planeIds: [] };
+const S = { points: [], selected: null, selectedModelId: null, station: 0, frame: null, marker: null, planeIds: [], centerline: null };
 const $ = id => document.getElementById(id);
 const markerUrl = new URL("../assets/station-marker.png", import.meta.url).href;
 const refresh = { timer: null, inProgress: false, pending: false, lastSignature: null, retried: false };
@@ -31,75 +31,157 @@ function renderSources() {
     }
     $("geometrySourceSummary").textContent = `${summary.sourceCount} kilder · ${summary.viewerCount} fra visning · ${summary.localCount} lokale · ${summary.ifcCount} IFC + ${summary.trbCount} TRB`;
 }
-function eventName(detail) {
-    const event = detail?.event;
-    return typeof event === "string" ? event : String(event?.type || event?.name || event?.event || event?.action || "");
-}
+function eventName(detail) { const event = detail?.event; return typeof event === "string" ? event : String(event?.type || event?.name || event?.event || event?.action || ""); }
 function relevant(detail) {
     if (detail?.data?.origin?.isSelf || detail?.origin?.isSelf) return false;
     return ["modelstatechanged", "modelreset"].includes(eventName(detail).replace(/[^a-z0-9]/gi, "").toLowerCase());
 }
-function schedule(reason) {
-    clearTimeout(refresh.timer);
-    refresh.timer = setTimeout(() => { refresh.timer = null; discover({ reason }); }, DEBOUNCE_MS);
-}
+function schedule(reason) { clearTimeout(refresh.timer); refresh.timer = setTimeout(() => { refresh.timer = null; discover({ reason }); }, DEBOUNCE_MS); }
 function signature(models, ids) {
     return [...Array.from(ids).map(id => `v:${id}`), ...models.map(model => `${model.modelId || model.id || model.fileId || model.versionId}:${model.name || model.fileName || model.displayName || ""}`)].sort().join("|");
 }
-function diagnosticKeys(value) {
-    if (!value || (typeof value !== "object" && typeof value !== "function")) return [];
-    try { return Object.keys(value).sort(); } catch { return []; }
-}
+function diagnosticKeys(value) { if (!value || !["object", "function"].includes(typeof value)) return []; try { return Object.keys(value).sort(); } catch { return []; } }
 function diagnosticScalarFields(value) {
     if (!value || typeof value !== "object") return {};
     const result = {};
-    for (const key of diagnosticKeys(value)) {
-        const item = value[key];
-        if (item === null || ["string", "number", "boolean"].includes(typeof item)) result[key] = item;
-    }
+    for (const key of diagnosticKeys(value)) { const item = value[key]; if (item === null || ["string", "number", "boolean"].includes(typeof item)) result[key] = item; }
     return result;
 }
 function summarizeViewerModel(model) {
-    return {
-        keys: diagnosticKeys(model), scalarFields: diagnosticScalarFields(model),
+    return { keys: diagnosticKeys(model), scalarFields: diagnosticScalarFields(model),
         identifiers: { modelId: model?.modelId ?? null, id: model?.id ?? null, fileId: model?.fileId ?? null, versionId: model?.versionId ?? null, name: model?.name ?? model?.fileName ?? model?.displayName ?? null },
-        nestedFile: model?.file ? { keys: diagnosticKeys(model.file), scalarFields: diagnosticScalarFields(model.file) } : null
-    };
+        nestedFile: model?.file ? { keys: diagnosticKeys(model.file), scalarFields: diagnosticScalarFields(model.file) } : null };
 }
 async function logTrimbleFileMetadataDiagnostic(models) {
     const api = getAPI();
-    const diagnostic = {
-        version: VERSION, timestamp: new Date().toISOString(),
-        workspace: {
-            keys: diagnosticKeys(api), hasViewer: Boolean(api?.viewer), hasProject: Boolean(api?.project), hasExtension: Boolean(api?.extension),
-            viewerMethods: diagnosticKeys(api?.viewer).filter(key => typeof api?.viewer?.[key] === "function"),
-            projectMethods: diagnosticKeys(api?.project).filter(key => typeof api?.project?.[key] === "function"),
-            extensionMethods: diagnosticKeys(api?.extension).filter(key => typeof api?.extension?.[key] === "function"),
-            requestPermissionAvailable: typeof api?.extension?.requestPermission === "function"
-        }, project: null, projectError: null, models: [], loadedModels: []
-    };
-    try {
-        const project = await api.project.getProject();
-        diagnostic.project = { keys: diagnosticKeys(project), scalarFields: diagnosticScalarFields(project), identifiers: { id: project?.id ?? null, name: project?.name ?? null, region: project?.region ?? project?.serverRegion ?? null } };
-    } catch (error) { diagnostic.projectError = error?.message || String(error); }
+    const diagnostic = { version: VERSION, timestamp: new Date().toISOString(), workspace: {
+        keys: diagnosticKeys(api), hasViewer: Boolean(api?.viewer), hasProject: Boolean(api?.project), hasExtension: Boolean(api?.extension),
+        viewerMethods: diagnosticKeys(api?.viewer).filter(key => typeof api?.viewer?.[key] === "function"),
+        projectMethods: diagnosticKeys(api?.project).filter(key => typeof api?.project?.[key] === "function"),
+        extensionMethods: diagnosticKeys(api?.extension).filter(key => typeof api?.extension?.[key] === "function"),
+        requestPermissionAvailable: typeof api?.extension?.requestPermission === "function"
+    }, project: null, projectError: null, models: [], loadedModels: [] };
+    try { const project = await api.project.getProject(); diagnostic.project = { keys: diagnosticKeys(project), scalarFields: diagnosticScalarFields(project), identifiers: { id: project?.id ?? null, name: project?.name ?? null, region: project?.region ?? project?.serverRegion ?? null } }; }
+    catch (error) { diagnostic.projectError = error?.message || String(error); }
     for (const model of models || []) {
         diagnostic.models.push(summarizeViewerModel(model));
         const modelId = String(model?.modelId ?? model?.id ?? model?.fileId ?? model?.versionId ?? "");
         if (!modelId || typeof api?.viewer?.getLoadedModel !== "function") continue;
         try {
             const loaded = await api.viewer.getLoadedModel(modelId), blob = loaded?.blob;
-            diagnostic.loadedModels.push({
-                modelId, keys: diagnosticKeys(loaded), scalarFields: diagnosticScalarFields(loaded),
+            diagnostic.loadedModels.push({ modelId, keys: diagnosticKeys(loaded), scalarFields: diagnosticScalarFields(loaded),
                 identifiers: { id: loaded?.id ?? null, versionId: loaded?.versionId ?? null, name: loaded?.name ?? null, type: loaded?.type ?? null, nestingLevel: loaded?.nestingLevel ?? null, permission: loaded?.permission ?? null, isOldVersion: loaded?.isOldVersion ?? null },
                 nestedFile: loaded?.file ? { keys: diagnosticKeys(loaded.file), scalarFields: diagnosticScalarFields(loaded.file) } : null,
-                blob: { present: blob != null, type: blob instanceof Blob ? "Blob" : typeof blob, size: blob instanceof Blob ? blob.size : null, stringLength: typeof blob === "string" ? blob.length : null }
-            });
+                blob: { present: blob != null, type: blob instanceof Blob ? "Blob" : typeof blob, size: blob instanceof Blob ? blob.size : null, stringLength: typeof blob === "string" ? blob.length : null } });
         } catch (error) { diagnostic.loadedModels.push({ modelId, error: error?.message || String(error) }); }
     }
-    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3f", diagnostic);
+    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.4d", diagnostic);
     window.__crossSectionTrimbleFileMetadataDiagnostic = diagnostic;
     return diagnostic;
 }
+
+function norm(vector) {
+    const length = Math.hypot(vector.x, vector.y, vector.z || 0);
+    return length ? { x: vector.x / length, y: vector.y / length, z: (vector.z || 0) / length } : { x: 0, y: 0, z: 0 };
+}
+function curveWithChainage(points) {
+    const clean = [];
+    for (const point of points || []) {
+        const p = { x: +point.x, y: +point.y, z: +point.z };
+        if (!Object.values(p).every(Number.isFinite)) continue;
+        const previous = clean.at(-1);
+        if (previous && Math.hypot(p.x - previous.x, p.y - previous.y, p.z - previous.z) < 0.001) continue;
+        clean.push(p);
+    }
+    let chainage = 0;
+    return clean.map((point, index) => {
+        if (index) chainage += Math.hypot(point.x - clean[index - 1].x, point.y - clean[index - 1].y);
+        return { ...point, chainage };
+    });
+}
+function projectPointToCurve(point, curve) {
+    let best = null;
+    for (let i = 0; i < curve.length - 1; i += 1) {
+        const a = curve[i], b = curve[i + 1], vx = b.x - a.x, vy = b.y - a.y;
+        const length2 = vx * vx + vy * vy;
+        if (!length2) continue;
+        const t = Math.max(0, Math.min(1, ((point.x - a.x) * vx + (point.y - a.y) * vy) / length2));
+        const x = a.x + vx * t, y = a.y + vy * t, z = a.z + (b.z - a.z) * t;
+        const distance = Math.hypot(point.x - x, point.y - y);
+        const chainage = a.chainage + (b.chainage - a.chainage) * t;
+        if (!best || distance < best.distance) best = { chainage, distance, segmentIndex: i, point: { x, y, z } };
+    }
+    return best;
+}
+function pointAtChainage(curve, chainage) {
+    if (!curve?.length) return null;
+    if (chainage <= curve[0].chainage) return { ...curve[0], segmentIndex: 0 };
+    if (chainage >= curve.at(-1).chainage) return { ...curve.at(-1), segmentIndex: curve.length - 2 };
+    for (let i = 0; i < curve.length - 1; i += 1) {
+        const a = curve[i], b = curve[i + 1];
+        if (chainage < a.chainage || chainage > b.chainage) continue;
+        const span = b.chainage - a.chainage;
+        const t = span ? (chainage - a.chainage) / span : 0;
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, chainage, segmentIndex: i };
+    }
+    return null;
+}
+function buildCenterline(rawPoints, stationPoints) {
+    const curve = curveWithChainage(rawPoints);
+    if (curve.length < 2) return null;
+    const anchors = stationPoints.map(stationPoint => {
+        const projection = projectPointToCurve(stationPoint, curve);
+        return projection ? { station: stationPoint.station, chainage: projection.chainage, distance: projection.distance } : null;
+    }).filter(Boolean).sort((a, b) => a.station - b.station);
+    if (anchors.length < 2) return null;
+    return { curve, anchors };
+}
+function attachCenterline() {
+    S.centerline = null;
+    if (!S.selectedModelId || S.points.length < 2) return false;
+    const provider = R.providers.find(item => item.type === "ifc" && item.status === "ready" && String(item.modelId) === String(S.selectedModelId) && typeof item.getAlignmentCurves === "function");
+    const curves = provider?.getAlignmentCurves?.() || [];
+    if (!curves.length) return false;
+    let best = null;
+    for (const candidate of curves) {
+        const centerline = buildCenterline(candidate.points, S.points);
+        if (!centerline) continue;
+        const score = centerline.anchors.reduce((sum, anchor) => sum + anchor.distance, 0) / centerline.anchors.length;
+        if (!best || score < best.score) best = { ...centerline, score, sourceId: provider.id, alignmentIndex: candidate.alignmentIndex };
+    }
+    if (!best) return false;
+    S.centerline = best;
+    const diagnostic = { sourceId: best.sourceId, alignmentIndex: best.alignmentIndex, pointCount: best.curve.length, meanAnchorDistance: best.score, anchors: best.anchors };
+    log("CURVE3D-SENTERLINJE v0.6.4d", diagnostic);
+    window.__crossSectionCenterlineEvaluation = diagnostic;
+    return true;
+}
+function fallbackEvaluate(station) {
+    if (S.points.length < 2) return null;
+    let a = S.points[0], b = S.points[1];
+    for (let i = 0; i < S.points.length - 1; i += 1) if (station >= S.points[i].station && station <= S.points[i + 1].station) { a = S.points[i]; b = S.points[i + 1]; break; }
+    if (station >= S.points.at(-1).station) { a = S.points.at(-2); b = S.points.at(-1); }
+    const ratio = Math.max(0, Math.min(1, (station - a.station) / (b.station - a.station)));
+    const position = { x: a.x + (b.x - a.x) * ratio, y: a.y + (b.y - a.y) * ratio, z: a.z + (b.z - a.z) * ratio };
+    const tangent = norm({ x: b.x - a.x, y: b.y - a.y, z: 0 });
+    return { station, position, horizontalTangent: tangent, horizontalNormal: { x: -tangent.y, y: tangent.x, z: 0 }, source: "referent-fallback" };
+}
+function evaluate(station) {
+    if (!S.centerline) return fallbackEvaluate(station);
+    const anchors = S.centerline.anchors;
+    let a = anchors[0], b = anchors[1];
+    for (let i = 0; i < anchors.length - 1; i += 1) if (station >= anchors[i].station && station <= anchors[i + 1].station) { a = anchors[i]; b = anchors[i + 1]; break; }
+    if (station >= anchors.at(-1).station) { a = anchors.at(-2); b = anchors.at(-1); }
+    const ratio = Math.max(0, Math.min(1, (station - a.station) / (b.station - a.station)));
+    const targetChainage = a.chainage + (b.chainage - a.chainage) * ratio;
+    const point = pointAtChainage(S.centerline.curve, targetChainage);
+    if (!point) return fallbackEvaluate(station);
+    const curve = S.centerline.curve, i = Math.max(0, Math.min(curve.length - 2, point.segmentIndex));
+    const direction = Math.sign(b.chainage - a.chainage) || 1;
+    const tangent = norm({ x: (curve[i + 1].x - curve[i].x) * direction, y: (curve[i + 1].y - curve[i].y) * direction, z: 0 });
+    return { station, position: { x: point.x, y: point.y, z: point.z }, horizontalTangent: tangent, horizontalNormal: { x: -tangent.y, y: tangent.x, z: 0 }, source: "curve3D" };
+}
+
 async function discover({ reason = "manual", force = false } = {}) {
     const api = getAPI();
     if (!api?.viewer) return;
@@ -115,20 +197,17 @@ async function discover({ reason = "manual", force = false } = {}) {
         const currentSignature = signature(models, ids);
         if (!force && currentSignature === refresh.lastSignature) return;
         refresh.lastSignature = currentSignature;
-        // v0.6.3f: Viewerens TRB-buffer registreres ikke som geometrikilde.
-        // Original IFC hentes og kobles til Viewer-modellen ved manuell oppdatering.
         await logTrimbleFileMetadataDiagnostic(models);
         if (reason === "manual") {
             setStatus("Ber om tilgang til original IFC-fil...");
             await downloadOriginalIfc({ api, models, registry: R, renderSources });
+            if (S.selected) { attachCenterline(); setStation(S.station); }
         }
         renderSources();
         const summary = R.summary();
         log("SYNLIGE MODELLER - OPPDATERT", { reason, visibleObjectGroupCount: ids.size, visibleModelCount: models.length, models: models.map(model => ({ id: model.modelId || model.id || model.fileId || model.versionId, name: model.name || model.fileName || model.displayName })) });
         setStatus(`${summary.viewerCount} synlige IFC-modeller funnet`);
-        if (reason === "startup" && ids.size && models.length === 0 && !refresh.retried) {
-            refresh.retried = true; setTimeout(() => discover({ reason: "startup-retry", force: true }), 1200);
-        }
+        if (reason === "startup" && ids.size && models.length === 0 && !refresh.retried) { refresh.retried = true; setTimeout(() => discover({ reason: "startup-retry", force: true }), 1200); }
     } catch (error) {
         console.error("FEIL VED MODELLHENTING", error);
         if (reason === "manual" || reason === "startup") setStatus("Kunne ikke hente synlige modeller");
@@ -142,15 +221,11 @@ async function localFiles(event) {
     if (!files?.length) return;
     setStatus(`Åpner ${files.length} lokal(e) geometrifil(er)...`);
     await R.addLocalFiles(files, renderSources); renderSources();
+    if (S.selected) { attachCenterline(); setStation(S.station); }
     const errors = R.summary().sources.filter(source => source.status === "error");
-    if (errors.length) { console.error("GEOMETRIKILDER MED FEIL:", errors); setStatus(`${errors.length} geometrikilde(r) feilet - se Console`); }
-    else setStatus(`${R.summary().readyCount} geometrikilde(r) klare`);
+    setStatus(errors.length ? `${errors.length} geometrikilde(r) feilet - se Console` : `${R.summary().readyCount} geometrikilde(r) klare`);
     event.target.value = "";
 }
-const norm = vector => {
-    const length = Math.hypot(vector.x, vector.y, vector.z);
-    return length ? { x: vector.x / length, y: vector.y / length, z: vector.z / length } : { x: 0, y: 0, z: 0 };
-};
 function stationOf(object) {
     for (const group of object.properties || []) {
         const value = (group.properties || []).find(property => property.name === "Station");
@@ -158,19 +233,9 @@ function stationOf(object) {
     }
     return Number(object.product?.name);
 }
-function evaluate(station) {
-    if (S.points.length < 2) return null;
-    let a = S.points[0], b = S.points[1];
-    for (let i = 0; i < S.points.length - 1; i++) if (station >= S.points[i].station && station <= S.points[i + 1].station) { a = S.points[i]; b = S.points[i + 1]; break; }
-    if (station >= S.points.at(-1).station) { a = S.points.at(-2); b = S.points.at(-1); }
-    const ratio = Math.max(0, Math.min(1, (station - a.station) / (b.station - a.station)));
-    const position = { x: a.x + (b.x - a.x) * ratio, y: a.y + (b.y - a.y) * ratio, z: a.z + (b.z - a.z) * ratio };
-    const tangent = norm({ x: b.x - a.x, y: b.y - a.y, z: 0 });
-    return { station, position, horizontalTangent: tangent, horizontalNormal: { x: -tangent.y, y: tangent.x, z: 0 } };
-}
 async function mark(frame) {
     const api = getAPI();
-    if (S.marker) try { await api.viewer.removeIcon(S.marker); } catch {}
+    if (S.marker) try { await api.viewer.removeIcon(S.marker); } catch { /* no-op */ }
     const icon = { id: 930170, position: { x: frame.position.x, y: frame.position.y, z: frame.position.z + 0.2 }, iconPath: markerUrl, size: 30 };
     await api.viewer.addIcon(icon); S.marker = icon;
 }
@@ -185,21 +250,22 @@ async function selectProfile() {
         if (!selection) throw Error("Ingen profileringslinje valgt");
         const object = (await api.viewer.getObjectProperties(selection.modelId, selection.objectRuntimeIds))[0];
         if (String(object.class).toUpperCase() !== "IFCALIGNMENT") throw Error("Valgt objekt er ikke IFCALIGNMENT");
-        S.selected = object; $("profileName").value = object.product?.name || "Ukjent"; $("profileId").textContent = selection.objectRuntimeIds[0];
+        S.selected = object; S.selectedModelId = String(selection.modelId); S.centerline = null;
+        $("profileName").value = object.product?.name || "Ukjent"; $("profileId").textContent = selection.objectRuntimeIds[0];
         const children = await api.viewer.getHierarchyChildren(selection.modelId, selection.objectRuntimeIds, undefined, true);
         const properties = await api.viewer.getObjectProperties(selection.modelId, children.map(item => +item.id));
-        S.points = properties.filter(item => item.class === "IFCREFERENT" && item.product?.objectType === "STATION").map(item => ({ station: stationOf(item), x: +item.position.x, y: +item.position.y, z: +item.position.z })).filter(point => Object.values(point).every(Number.isFinite)).sort((a, b) => a.station - b.station);
+        S.points = properties.filter(item => item.class === "IFCREFERENT" && item.product?.objectType === "STATION")
+            .map(item => ({ station: stationOf(item), x: +item.position.x, y: +item.position.y, z: +item.position.z }))
+            .filter(point => Object.values(point).every(Number.isFinite)).sort((a, b) => a.station - b.station);
         if (S.points.length < 2) throw Error("Fant ikke nok stasjonsreferenter i valgt IFCALIGNMENT");
+        attachCenterline();
         const first = S.points[0].station, last = S.points.at(-1).station;
         $("profileLength").textContent = (last - first).toFixed(3) + " m";
         $("stationSlider").min = first; $("stationSlider").max = last; $("stationInput").min = first; $("stationInput").max = last;
-        setStation(first); setStatus("Profil valgt");
+        setStation(first); setStatus(S.centerline ? "Profil valgt - curve3D-senterlinje aktiv" : "Profil valgt - referentfallback aktiv");
     } catch (error) { alert(error.message); }
 }
-function copyBox(box) {
-    if (!box?.min || !box?.max) return null;
-    return { min: { x: +box.min.x, y: +box.min.y, z: +box.min.z }, max: { x: +box.max.x, y: +box.max.y, z: +box.max.z } };
-}
+function copyBox(box) { return !box?.min || !box?.max ? null : { min: { x: +box.min.x, y: +box.min.y, z: +box.min.z }, max: { x: +box.max.x, y: +box.max.y, z: +box.max.z } }; }
 async function candidates(api, frame, sectionWidth) {
     const groups = await api.viewer.getObjects({}, { visible: true }), candidatesByModel = [];
     let totalObjects = 0, candidateCount = 0;
@@ -209,8 +275,7 @@ async function candidates(api, frame, sectionWidth) {
         for (let index = 0; index < runtimeIds.length; index += 300) {
             const boxes = await api.viewer.getObjectBoundingBoxes(group.modelId, runtimeIds.slice(index, index + 300));
             for (const item of boxes || []) {
-                const box = item.boundingBox;
-                if (!box) continue;
+                const box = item.boundingBox; if (!box) continue;
                 const values = [];
                 for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
                     const dx = x - frame.position.x, dy = y - frame.position.y;
@@ -224,8 +289,7 @@ async function candidates(api, frame, sectionWidth) {
         }
         if (selectedItems.length) {
             let externalIds = [];
-            try { externalIds = await api.viewer.convertToObjectIds(group.modelId, selectedItems.map(item => item.runtimeId)); }
-            catch (error) { console.warn("Kunne ikke konvertere RuntimeIds til eksterne ID-er:", group.modelId, error); }
+            try { externalIds = await api.viewer.convertToObjectIds(group.modelId, selectedItems.map(item => item.runtimeId)); } catch (error) { console.warn("Kunne ikke konvertere RuntimeIds:", error); }
             const items = selectedItems.map((item, index) => ({ ...item, globalId: externalIds?.[index] != null ? String(externalIds[index]) : null })).filter(item => item.globalId);
             candidatesByModel.push({ modelId: String(group.modelId), runtimeIds: items.map(item => item.runtimeId), externalIds: items.map(item => item.globalId), items });
         }
@@ -254,19 +318,16 @@ async function generate() {
         }
         const sectionResult = intersectMeshes(meshes, frame, { sectionWidth, calibrations });
         renderSectionSegments(svg, sectionResult.segments, profileData);
-        const diagnostics = { ...candidateResult, ...R.summary(), ifcProvidersReady: readyIfcProviders.length, linkedCandidateCount, meshesProcessed: sectionResult.meshesProcessed, trianglesTested: sectionResult.trianglesTested, segmentCount: sectionResult.segments.length, objectsDrawn: sectionResult.objectsDrawn, sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, selectedAxisMapping: sectionResult.selectedAxisMapping, profileTypeDiagnostic: sectionResult.profileTypeDiagnostic, viewerIfcCalibration: sectionResult.calibrationDiagnostic };
+        const diagnostics = { ...candidateResult, ...R.summary(), frameSource: frame.source, ifcProvidersReady: readyIfcProviders.length, linkedCandidateCount, meshesProcessed: sectionResult.meshesProcessed, trianglesTested: sectionResult.trianglesTested, segmentCount: sectionResult.segments.length, objectsDrawn: sectionResult.objectsDrawn, sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, selectedAxisMapping: sectionResult.selectedAxisMapping, profileTypeDiagnostic: sectionResult.profileTypeDiagnostic, viewerIfcCalibration: sectionResult.calibrationDiagnostic };
         renderGeometryDiagnostic(svg, diagnostics);
-        window.__crossSectionViewerIfcCalibration = sectionResult.calibrationDiagnostic;
-        window.__crossSectionIfcResult = diagnostics;
-        log("VIEWER–IFC-KALIBRERING", sectionResult.calibrationDiagnostic);
-        log("IFC-SNITTRESULTAT", diagnostics);
-        setStatus(sectionResult.segments.length ? `${sectionResult.objectsDrawn} objekter tegnet, ${sectionResult.segments.length} segmenter` : readyIfcProviders.length ? "Ingen IFC-geometri traff snittplanet - se Console" : "Koble en lokal IFC-fil under Avansert for å tegne profilgeometri");
+        window.__crossSectionViewerIfcCalibration = sectionResult.calibrationDiagnostic; window.__crossSectionIfcResult = diagnostics;
+        log("VIEWER–IFC-KALIBRERING", sectionResult.calibrationDiagnostic); log("IFC-SNITTRESULTAT", diagnostics);
+        setStatus(sectionResult.segments.length ? `${sectionResult.objectsDrawn} objekter tegnet, ${sectionResult.segments.length} segmenter` : readyIfcProviders.length ? "Ingen IFC-geometri traff snittplanet - se Console" : "Oppdater synlige modeller for å hente original IFC");
     } catch (error) { console.error("FEIL VED GENERERING AV IFC-SNITT:", error); setStatus("Feil ved generering - se Console"); alert(error.message || String(error)); }
 }
 function bind() {
     $("btnRefreshModels").onclick = () => discover({ reason: "manual", force: true });
-    $("geometryFiles").onchange = localFiles;
-    $("btnClearLocal").onclick = () => { R.clearLocal(); renderSources(); };
+    $("geometryFiles").onchange = localFiles; $("btnClearLocal").onclick = () => { R.clearLocal(); renderSources(); };
     $("btnSelectProfile").onclick = selectProfile; $("btnGenerate").onclick = generate;
     $("minus10").onclick = () => setStation(S.station - 10); $("minus1").onclick = () => setStation(S.station - 1);
     $("plus1").onclick = () => setStation(S.station + 1); $("plus10").onclick = () => setStation(S.station + 10);
@@ -275,7 +336,7 @@ function bind() {
 async function init() {
     $("versionInfo").textContent = "v" + VERSION; $("buildInfo").textContent = BUILD_DATE;
     bind(); renderSources();
-    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3f" });
+    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.4d" });
     await connectTC(); await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
     console.log(APP_NAME, VERSION);
