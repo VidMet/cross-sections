@@ -1,9 +1,9 @@
-import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3c";
+import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.3d";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
-import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3c";
-import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3c";
-import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3c";
-import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3c";
+import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.3d";
+import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.3d";
+import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.3d";
+import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.3d";
 
 const EXPECTED_SECTION_ENGINE_VERSION = "0.5.4i-mirrored-offset";
 const R = new GeometryRegistry();
@@ -96,7 +96,7 @@ async function logTrimbleFileMetadataDiagnostic(models) {
             });
         } catch (error) { diagnostic.loadedModels.push({ modelId, error: error?.message || String(error) }); }
     }
-    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3c", diagnostic);
+    log("TRIMBLE-FILMETADATA-DIAGNOSE v0.6.3d", diagnostic);
     window.__crossSectionTrimbleFileMetadataDiagnostic = diagnostic;
     return diagnostic;
 }
@@ -254,7 +254,11 @@ async function generate() {
         const sectionResult = intersectMeshes(meshes, frame, { sectionWidth, calibrations });
         renderSectionSegments(svg, sectionResult.segments, profileData);
         const diagnostics = { ...candidateResult, ...R.summary(), ifcProvidersReady: readyIfcProviders.length, linkedCandidateCount, meshesProcessed: sectionResult.meshesProcessed, trianglesTested: sectionResult.trianglesTested, segmentCount: sectionResult.segments.length, objectsDrawn: sectionResult.objectsDrawn, sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, selectedAxisMapping: sectionResult.selectedAxisMapping, profileTypeDiagnostic: sectionResult.profileTypeDiagnostic, viewerIfcCalibration: sectionResult.calibrationDiagnostic };
-        renderGeometryDiagnostic(svg, diagnostics); log("VIEWER–IFC-KALIBRERING", sectionResult.calibrationDiagnostic); log("IFC-SNITTRESULTAT", diagnostics);
+        renderGeometryDiagnostic(svg, diagnostics);
+        window.__crossSectionViewerIfcCalibration = sectionResult.calibrationDiagnostic;
+        window.__crossSectionIfcResult = diagnostics;
+        log("VIEWER–IFC-KALIBRERING", sectionResult.calibrationDiagnostic);
+        log("IFC-SNITTRESULTAT", diagnostics);
         setStatus(sectionResult.segments.length ? `${sectionResult.objectsDrawn} objekter tegnet, ${sectionResult.segments.length} segmenter` : readyIfcProviders.length ? "Ingen IFC-geometri traff snittplanet - se Console" : "Koble en lokal IFC-fil under Avansert for å tegne profilgeometri");
     } catch (error) { console.error("FEIL VED GENERERING AV IFC-SNITT:", error); setStatus("Feil ved generering - se Console"); alert(error.message || String(error)); }
 }
@@ -270,7 +274,7 @@ function bind() {
 async function init() {
     $("versionInfo").textContent = "v" + VERSION; $("buildInfo").textContent = BUILD_DATE;
     bind(); renderSources();
-    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3c" });
+    log("MODULVERSJONER", { applicationVersion: VERSION, expectedSectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, cacheBustedModuleUrl: "./geometry/section-engine.js?v=0.6.3d" });
     await connectTC(); await discover({ reason: "startup", force: true });
     window.addEventListener("tc-workspace-event", event => { if (relevant(event.detail)) schedule(eventName(event.detail)); });
     console.log(APP_NAME, VERSION);
