@@ -1,4 +1,4 @@
-export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.7.3-centerline-corridor-filter";
+export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.7.4.1-corridor-object-streaming";
 const message = error => error?.message || String(error);
 const pause = () => new Promise(resolve => setTimeout(resolve, 0));
 const wait = (task, milliseconds, label) => {
@@ -113,10 +113,11 @@ async function groupMeetsCorridor(api, group, points, width) {
         const batch = runtimeIds.slice(start, start + 300);
         const boxes = await wait(() => api.viewer.getObjectBoundingBoxes(group.modelId, batch), 30000, `Bounding boxes for modell ${group.modelId}`);
         testedObjects += batch.length;
-        if ((boxes || []).some(item => boxMeetsCorridor(item.boundingBox, points, width))) return { included: true, testedObjects };
+        const hits = (boxes || []).filter(item => boxMeetsCorridor(item.boundingBox, points, width)).map(item => Number(item.id)).filter(Number.isFinite);
+        if (hits.length) return { included: true, testedObjects, runtimeIds: hits };
         await pause();
     }
-    return { included: false, testedObjects };
+    return { included: false, testedObjects, runtimeIds: [] };
 }
 
 async function discoverCorridorModels(api, suppliedModels, corridorWidth) {
@@ -129,7 +130,7 @@ async function discoverCorridorModels(api, suppliedModels, corridorWidth) {
         if (!id) continue;
         try {
             const assessment = await groupMeetsCorridor(api, group, centerline.points, corridorWidth);
-            (assessment.included ? includedGroups : excludedGroups).push({ modelId: id, objectCount: group.objects?.length || 0, testedObjects: assessment.testedObjects });
+            (assessment.included ? includedGroups : excludedGroups).push({ modelId: id, objectCount: group.objects?.length || 0, testedObjects: assessment.testedObjects, runtimeIds: assessment.runtimeIds || [] });
         } catch (error) {
             errors.push({ modelId: id, error: message(error) });
         }
@@ -142,7 +143,10 @@ async function discoverCorridorModels(api, suppliedModels, corridorWidth) {
             const file = loaded?.file || {};
             const supplied = suppliedById.get(group.modelId) || {};
             const name = String(file.name || loaded?.name || supplied.name || supplied.fileName || "");
-            if (/\.ifc$/i.test(name)) targets.push({ ...supplied, ...loaded, modelId: group.modelId, versionId: file.versionId || loaded?.versionId || supplied.versionId || group.modelId, name });
+            if (/\.ifc$/i.test(name)) {
+                const globalIds = group.runtimeIds.length ? (await api.viewer.convertToObjectIds(group.modelId, group.runtimeIds)).map(String) : [];
+                targets.push({ ...supplied, ...loaded, modelId: group.modelId, versionId: file.versionId || loaded?.versionId || supplied.versionId || group.modelId, name, corridorRuntimeIds: group.runtimeIds, corridorGlobalIds: globalIds });
+            }
         } catch (error) { errors.push({ modelId: group.modelId, error: message(error) }); }
     }
     return { centerline, visibleModelCount: (groups || []).length, includedGroups, excludedGroups, targets, errors };
@@ -175,12 +179,17 @@ async function processModel({ api, model, project, base, headers, registry, rend
         if (!signature.validIfcStep) throw new Error("Nedlastet fil mangler gyldig IFC STEP-signatur");
         result.stage = "decode-original-ifc";
         const before = new Set((registry.providers || []).map(provider => String(provider.id)));
-        await registry.addLocalFiles([new File([blob], result.fileName, { type: blob.type || "application/octet-stream", lastModified: Date.now() })], renderSources);
+        const corridorFile = new File([blob], result.fileName, { type: blob.type || "application/octet-stream", lastModified: Date.now() });
+        corridorFile.corridorGlobalIds = Array.from(new Set(model.corridorGlobalIds || []));
+        corridorFile.corridorRuntimeIds = Array.from(new Set(model.corridorRuntimeIds || []));
+        corridorFile.viewerModelId = result.modelId;
+        result.selectedObjectCount = corridorFile.corridorGlobalIds.length;
+        await registry.addLocalFiles([corridorFile], renderSources);
         const added = (registry.providers || []).filter(provider => !before.has(String(provider.id)));
         const linked = [...added].reverse().find(provider => provider?.type === "ifc" && provider?.file?.name === result.fileName) || [...added].reverse().find(provider => provider?.type === "ifc");
         if (!linked) throw new Error(`IFC-provider ble ikke funnet for ${result.fileName}`);
         linked.modelId = versionId || fileId || result.modelId; linked.origin = "viewer-original-ifc"; linked.fileOrigin = "trimble-connect-original"; linked.errorStage = linked.status === "error" ? "decode-original-ifc" : null;
-        linked.metadata = { ...(linked.metadata || {}), trimbleProjectId: projectId, trimbleFileId: fileId, trimbleVersionId: versionId, linkedViewerModelId: linked.modelId, sourceMethod: "trimble-connect-original-download", corridorFiltered: true };
+        linked.metadata = { ...(linked.metadata || {}), trimbleProjectId: projectId, trimbleFileId: fileId, trimbleVersionId: versionId, linkedViewerModelId: linked.modelId, sourceMethod: "trimble-connect-original-download", corridorFiltered: true, selectedObjectCount: result.selectedObjectCount };
         result.providerStatus = linked.status; result.providerError = linked.error || null;
         if (linked.status !== "ready") throw new Error(linked.error || `IFC-provider endte med status ${linked.status}`);
         result.attached = true; result.stage = "ready";
@@ -221,7 +230,7 @@ export async function downloadOriginalIfc({ api, models, registry, renderSources
     } catch (error) {
         diagnostic.error = message(error); diagnostic.errorName = error?.name || "Error";
     }
-    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.7.3 CORRIDOR FILTER =====");
+    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.7.4.1 CORRIDOR OBJECT STREAMING =====");
     console.dir(diagnostic);
     window.__crossSectionOriginalIfcDownloadDiagnostic = diagnostic;
     return diagnostic;

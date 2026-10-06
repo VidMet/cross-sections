@@ -1,19 +1,9 @@
-CrossSectionViewer v0.6.7.4 CORRIDOR_OBJECT_STREAMING
-Grunnlag: v0.6.7.3
+CrossSectionViewer v0.6.7.4.1 ACTIVATION_FIX
 
-Hovedendringer:
-- Objektbokser som treffer korridoren beholdes som runtime-ID-er.
-- Runtime-ID-er konverteres til IFC GlobalId før nedlasting.
-- GlobalId-er følger den nedlastede File-instansen inn i IFC-provideren.
-- GetExpressIdFromGuid kobler GlobalId til ExpressId.
-- StreamMeshes dekoder kun korridorobjektene, i puljer på 20.
-- Event loop frigjøres mellom puljene.
-- StreamAllMeshes brukes ikke.
-- CloseModel frigjør WASM-modellen etter behandling.
-- Import map tvinger app.js sine eldre imports til v0.6.7.4-modulene.
+Skjermbilde med v0.6.7.3 betyr at v0.6.7.4 ikke var aktiv.
+Denne pakken inneholder både versjonerte filer og de kanoniske filnavnene som eksisterende app.js importerer.
+Importkartet bruker ferdig oppløste /cross-sections/js/-URL-er.
 
-Diagnostikk:
-window.__crossSectionOriginalIfcDownloadDiagnostic
-Events:
-cross-section-ifc-progress
-cross-section-ifc-object-progress
+Kopier hele innholdet til prosjektmappen og overskriv alle filer.
+Lukk deretter utvidelsen helt og åpne den på nytt.
+Kontroller at UI viser v0.6.7.4.1 før ny ytelsestest.
