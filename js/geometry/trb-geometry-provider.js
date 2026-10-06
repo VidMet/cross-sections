@@ -1,33 +1,9 @@
 import { GeometryProvider } from "./geometry-provider.js";
 import { getAPI } from "../tc-api.js";
-import { decodeTrb8Meshes, TRB8_INTEGRATED_DECODER_VERSION } from "./trb8-integrated-decoder.js?v=0.6.6.0";
-
-export const TRB_GEOMETRY_PROVIDER_VERSION="0.6.6.0-registry-integrated";
+import { decodeTrb8Meshes, TRB8_INTEGRATED_DECODER_VERSION } from "./trb8-integrated-decoder.js?v=0.6.6.2";
+export const TRB_GEOMETRY_PROVIDER_VERSION="0.6.6.2-registry-integrated";
 export class TrbGeometryProvider extends GeometryProvider{
-  constructor(options){super({...options,type:"trb"});this.buffer=null;this.meshes=[];this.globalIdIndex=new Map();this.meshIndex=new Map()}
-  async viewerExternalIds(){
-    if(!this.modelId)return[];const api=getAPI();
-    const group=(await api.viewer.getObjects({}, {visible:true})||[]).find(x=>String(x.modelId)===String(this.modelId));
-    const runtimeIds=(group?.objects||[]).map(x=>Number(x.id)).filter(Number.isFinite);
-    return runtimeIds.length?await api.viewer.convertToObjectIds(this.modelId,runtimeIds):[];
-  }
-  async open(){
-    if(!this.file){this.status="discovered-no-blob";return this.getSummary()}
-    this.status="opening";this.error=null;
-    try{
-      this.buffer=await this.file.arrayBuffer();
-      const entityIds=(await this.viewerExternalIds()).map(String);
-      const decoded=decodeTrb8Meshes(this.buffer,{sourceId:String(this.id),entityIds});
-      this.meshes=decoded.meshes;this.globalIdIndex=decoded.byEntity;
-      this.meshIndex=new Map(this.meshes.map((m,i)=>[`${m.entityId}:${m.instanceIndex}`,i]));
-      this.entityCount=decoded.counts.entities;this.status="ready";
-      this.metadata={providerVersion:TRB_GEOMETRY_PROVIDER_VERSION,decoderVersion:TRB8_INTEGRATED_DECODER_VERSION,fileName:this.file.name,fileSize:this.file.size,modelId:this.modelId,meshCount:this.meshes.length,entityCount:this.entityCount,worldBox:decoded.worldBox};
-      window.__crossSectionIntegratedTrbProvider=this.metadata;
-      console.log("===== TRB8 GEOMETRYREGISTRY INTEGRATION v0.6.6.0 =====");console.dir(this.metadata);
-    }catch(error){this.status="error";this.error=error?.message||String(error);console.error("TRB8-integrasjon feilet",error)}
-    return this.getSummary();
-  }
-  getMeshesForGlobalIds(ids){const out=[];for(const id of ids||[])out.push(...(this.globalIdIndex.get(String(id))||[]));return out}
-  getAllMeshes(){return this.meshes.slice()}
-  close(){this.buffer=null;this.meshes=[];this.globalIdIndex.clear();this.meshIndex.clear();super.close()}
-}
+constructor(options){super({...options,type:"trb"});this.buffer=null;this.meshes=[];this.globalIdIndex=new Map();this.meshIndex=new Map()}
+async viewerExternalIds(){if(!this.modelId)return[];const api=getAPI(),group=(await api.viewer.getObjects({}, {visible:true})||[]).find(x=>String(x.modelId)===String(this.modelId)),ids=(group?.objects||[]).map(x=>Number(x.id)).filter(Number.isFinite);return ids.length?await api.viewer.convertToObjectIds(this.modelId,ids):[]}
+async open(){if(!this.file){this.status="discovered-no-blob";return this.getSummary()}this.status="opening";this.error=null;try{this.buffer=await this.file.arrayBuffer();const entityIds=(await this.viewerExternalIds()).map(String),d=decodeTrb8Meshes(this.buffer,{sourceId:String(this.id),entityIds});if(d.counts.badReferences||d.counts.invalidPositionReferences||d.counts.invalidVertexIndices)throw Error(`TRB validation failed: ${JSON.stringify(d.counts)}`);if(!d.counts.totalTriangles)throw Error("TRB decoder produced zero triangles");this.meshes=d.meshes;this.globalIdIndex=d.byEntity;this.meshIndex=new Map(this.meshes.map((m,i)=>[`${m.entityId}:${m.instanceIndex}`,i]));this.entityCount=d.counts.entities;this.status="ready";this.metadata={providerVersion:TRB_GEOMETRY_PROVIDER_VERSION,decoderVersion:TRB8_INTEGRATED_DECODER_VERSION,fileName:this.file.name,fileSize:this.file.size,modelId:this.modelId,meshCount:this.meshes.length,entityCount:this.entityCount,totalIndices:d.counts.totalIndices,totalTriangles:d.counts.totalTriangles,trianglesByKind:d.counts.trianglesByKind,worldBox:d.worldBox};window.__crossSectionIntegratedTrbProvider=this.metadata;console.log("===== TRB8 GEOMETRYREGISTRY INTEGRATION v0.6.6.2 =====");console.dir(this.metadata)}catch(error){this.status="error";this.error=error?.message||String(error);console.error("TRB8-integrasjon feilet",error)}return this.getSummary()}
+getMeshesForGlobalIds(ids){const out=[];for(const id of ids||[])out.push(...(this.globalIdIndex.get(String(id))||[]));return out}getAllMeshes(){return this.meshes.slice()}close(){this.buffer=null;this.meshes=[];this.globalIdIndex.clear();this.meshIndex.clear();super.close()}}
