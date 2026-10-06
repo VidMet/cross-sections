@@ -1,6 +1,6 @@
 import { VERSION, BUILD_DATE, APP_NAME } from "./versions.js?v=0.6.4d";
 import { connectTC, getAPI, setStatus } from "./tc-api.js";
-import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.6.0";
+import { GeometryRegistry } from "./geometry/geometry-registry.js?v=0.6.4d";
 import { renderProfileShell, renderGeometryDiagnostic, renderSectionSegments } from "./svg-renderer.js?v=0.6.4d";
 import { intersectMeshes } from "./geometry/section-engine.js?v=0.6.4d";
 import { downloadOriginalIfc } from "./original-ifc-download.js?v=0.6.4d";
@@ -318,8 +318,6 @@ async function generate() {
         const candidateResult = await candidates(api, frame, sectionWidth);
         const readyIfcProviders = R.providers.filter(provider => provider.type === "ifc" && provider.status === "ready" && provider.file);
         const meshes = [], calibrations = []; let linkedCandidateCount = 0;
-        const readyTrbProviders = R.providers.filter(provider => provider.type === "trb" && provider.status === "ready");
-        for (const provider of readyTrbProviders) meshes.push(...provider.getAllMeshes());
         for (const provider of readyIfcProviders) {
             const viewerGroup = candidateResult.candidatesByModel.find(group => String(group.modelId) === String(provider.modelId));
             const externalIds = viewerGroup?.externalIds || [];
@@ -329,7 +327,7 @@ async function generate() {
         }
         const sectionResult = intersectMeshes(meshes, frame, { sectionWidth, calibrations });
         renderSectionSegments(svg, sectionResult.segments, profileData);
-        const diagnostics = { ...candidateResult, ...R.summary(), frameSource: frame.source, ifcProvidersReady: readyIfcProviders.length, trbProvidersReady: readyTrbProviders.length, linkedCandidateCount, meshesProcessed: sectionResult.meshesProcessed, trianglesTested: sectionResult.trianglesTested, segmentCount: sectionResult.segments.length, objectsDrawn: sectionResult.objectsDrawn, sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, selectedAxisMapping: sectionResult.selectedAxisMapping, profileTypeDiagnostic: sectionResult.profileTypeDiagnostic, viewerIfcCalibration: sectionResult.calibrationDiagnostic };
+        const diagnostics = { ...candidateResult, ...R.summary(), frameSource: frame.source, ifcProvidersReady: readyIfcProviders.length, linkedCandidateCount, meshesProcessed: sectionResult.meshesProcessed, trianglesTested: sectionResult.trianglesTested, segmentCount: sectionResult.segments.length, objectsDrawn: sectionResult.objectsDrawn, sectionEngineVersion: EXPECTED_SECTION_ENGINE_VERSION, selectedAxisMapping: sectionResult.selectedAxisMapping, profileTypeDiagnostic: sectionResult.profileTypeDiagnostic, viewerIfcCalibration: sectionResult.calibrationDiagnostic };
         renderGeometryDiagnostic(svg, diagnostics);
         window.__crossSectionViewerIfcCalibration = sectionResult.calibrationDiagnostic; window.__crossSectionIfcResult = diagnostics;
         log("VIEWER–IFC-KALIBRERING", sectionResult.calibrationDiagnostic); log("IFC-SNITTRESULTAT", diagnostics);
