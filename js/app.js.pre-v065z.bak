@@ -242,16 +242,7 @@ async function mark(frame) {
 function setStation(value) {
     const slider = $("stationSlider"), station = Math.max(+slider.min, Math.min(+slider.max, +value));
     S.station = station; $("stationInput").value = station.toFixed(3); slider.value = station; $("stationLabel").textContent = station.toFixed(3);
-    S.frame = evaluate(station);
-    if (S.frame) {
-        window.__crossSectionCurrentFrame = structuredClone(S.frame);
-        window.dispatchEvent(new CustomEvent("cross-section-frame-changed", {
-            detail: structuredClone(S.frame)
-        }));
-        mark(S.frame);
-    } else {
-        window.__crossSectionCurrentFrame = null;
-    }
+    S.frame = evaluate(station); if (S.frame) mark(S.frame);
 }
 async function selectProfile() {
     try {
