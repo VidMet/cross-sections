@@ -1,14 +1,6 @@
 CrossSectionViewer v0.6.7.3 CENTERLINE_CORRIDOR_FILTER
 Grunnlag: v0.6.7.2
 
-Kopier hele innholdet til prosjektmappen og overskriv eksisterende filer.
-
-Komplette erstatningsfiler:
-- index.html
-- style.css
-- js/versions.js
-- js/original-ifc-download.js
-
 Virkemåte:
 1. Brukeren velger IFCALIGNMENT.
 2. Oppdater synlige modeller henter stasjonsreferentene.
