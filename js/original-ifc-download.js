@@ -1,132 +1,37 @@
-export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.3e";
-
-function coreBase(location) {
-    const value = String(location || "").toLowerCase();
-    if (value.includes("europe") || value === "eu") return "https://app21.connect.trimble.com/tc/api";
-    if (value.includes("uk")) return "https://app22.connect.trimble.com/tc/api";
-    if (value.includes("ap2")) return "https://app32.connect.trimble.com/tc/api";
-    if (value.includes("ap")) return "https://app31.connect.trimble.com/tc/api";
-    return "https://app.connect.trimble.com/tc/api";
+export const ORIGINAL_IFC_DOWNLOAD_VERSION = "0.6.7-ui-and-loading-stabilization";
+const errorText = error => error?.message || String(error);
+const wait = (task, ms, label) => { let timer; return Promise.race([task(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} overskred ${ms / 1000} sekunder`)), ms); })]).finally(() => clearTimeout(timer)); };
+function coreBase(location){const value=String(location||"").toLowerCase();if(value.includes("europe")||value==="eu")return "https://app21.connect.trimble.com/tc/api";if(value.includes("uk"))return "https://app22.connect.trimble.com/tc/api";if(value.includes("ap2"))return "https://app32.connect.trimble.com/tc/api";if(value.includes("ap"))return "https://app31.connect.trimble.com/tc/api";return "https://app.connect.trimble.com/tc/api";}
+function safeUrl(value){try{const url=new URL(String(value));return `${url.origin}${url.pathname}`;}catch{return null;}}
+async function token(api){const permission=await api.extension.requestPermission("accesstoken");let value=typeof permission==="string"&&permission.length>100?permission:null;if(!value&&typeof api.extension.getPermission==="function")try{value=await api.extension.getPermission("accesstoken");}catch{}return{value,status:value?"token-received":String(permission||"no-token")};}
+async function compact(response){const contentType=response.headers.get("content-type")||"";let body=null;try{body=/json/i.test(contentType)?await response.clone().json():(await response.clone().text()).slice(0,1000);}catch(error){body={readError:errorText(error)};}return{ok:response.ok,status:response.status,statusText:response.statusText,url:safeUrl(response.url),body};}
+function findUrl(value){if(!value)return null;if(typeof value==="string"&&/^https?:\/\//i.test(value))return value;if(Array.isArray(value)){for(const item of value){const hit=findUrl(item);if(hit)return hit;}}else if(typeof value==="object"){for(const key of["downloadUrl","downloadURL","url","signedUrl","signedURL","href"])if(typeof value[key]==="string"&&/^https?:\/\//i.test(value[key]))return value[key];for(const item of Object.values(value)){const hit=findUrl(item);if(hit)return hit;}}return null;}
+async function signature(blob,name){const bytes=new Uint8Array(await blob.slice(0,4096).arrayBuffer());const text=new TextDecoder("utf-8").decode(bytes).replace(/^\uFEFF/,"").trimStart();return{name,size:blob.size,validIfcStep:text.toUpperCase().startsWith("ISO-10303-21;")&&/HEADER\s*;/i.test(text.slice(0,1024)),firstBytesHex:Array.from(bytes.slice(0,32)).map(value=>value.toString(16).padStart(2,"0")).join(" ")};}
+function modelIdentifier(model){return String(model?.versionId||model?.modelId||model?.id||model?.fileId||"");}
+async function processModel({api,model,project,base,headers,registry,renderSources}){
+ const result={fileName:String(model?.name||model?.fileName||"model.ifc"),modelId:modelIdentifier(model),stage:"viewer.getLoadedModel",requests:[],download:null,attached:false,error:null};
+ try{
+  const loaded=await wait(()=>api.viewer.getLoadedModel(result.modelId),30000,`Henting av ${result.fileName}`);const meta=loaded?.file||{};
+  const projectId=String(meta.projectId||project.id||""),fileId=String(meta.id||loaded?.id||model?.id||""),versionId=String(meta.versionId||loaded?.versionId||model?.versionId||model?.modelId||"");
+  result.fileName=String(meta.name||loaded?.name||model?.name||result.fileName);Object.assign(result,{projectId,fileId,versionId});
+  const urls=[["file-metadata",`${base}/2.0/files/${encodeURIComponent(fileId)}`],["file-versions",`${base}/2.1/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/versions`],["download-url",`${base}/2.0/files/fs/${encodeURIComponent(versionId||fileId)}/downloadurl`]];
+  let downloadUrl=null;
+  for(const[name,url]of urls){result.stage=`request.${name}`;try{const data=await wait(()=>fetch(url,{headers}).then(compact),30000,`${name} for ${result.fileName}`);result.requests.push({name,...data});if(name==="download-url")downloadUrl=typeof data.body?.url==="string"?data.body.url:findUrl(data.body);}catch(error){result.requests.push({name,error:errorText(error)});}}
+  if(!downloadUrl)throw new Error("Fant ingen nedlastingsadresse for original IFC");
+  result.stage="download-original-ifc";const response=await wait(()=>fetch(downloadUrl),120000,`Nedlasting av ${result.fileName}`);const blob=await response.blob();const check=await signature(blob,result.fileName);result.download={ok:response.ok,status:response.status,url:safeUrl(response.url),signature:check};
+  if(!response.ok)throw new Error(`IFC-nedlasting svarte HTTP ${response.status}`);if(!check.validIfcStep)throw new Error("Nedlastet fil mangler gyldig IFC STEP-signatur");
+  result.stage="decode-original-ifc";const before=new Set((registry.providers||[]).map(provider=>String(provider.id)));const file=new File([blob],result.fileName,{type:blob.type||"application/octet-stream",lastModified:Date.now()});
+  await registry.addLocalFiles([file],renderSources);const added=(registry.providers||[]).filter(provider=>!before.has(String(provider.id)));const linked=[...added].reverse().find(provider=>provider?.type==="ifc"&&provider?.file?.name===result.fileName)||[...added].reverse().find(provider=>provider?.type==="ifc");
+  if(!linked)throw new Error(`Original IFC ble behandlet, men provider mangler for ${result.fileName}`);
+  linked.modelId=versionId||fileId||result.modelId;linked.origin="viewer-original-ifc";linked.fileOrigin="trimble-connect-original";linked.errorStage=linked.status==="error"?"decode-original-ifc":null;linked.metadata={...(linked.metadata||{}),trimbleProjectId:projectId,trimbleFileId:fileId,trimbleVersionId:versionId,linkedViewerModelId:linked.modelId,sourceMethod:"trimble-connect-original-download"};
+  result.attached=linked.status==="ready";result.providerStatus=linked.status;result.providerError=linked.error||null;if(linked.status!=="ready")throw new Error(linked.error||`IFC-provider endte med status ${linked.status}`);result.stage="ready";renderSources?.();
+ }catch(error){result.error=errorText(error);console.error("ORIGINAL IFC-MODELLFEIL",{modelId:result.modelId,fileName:result.fileName,stage:result.stage,error});}
+ return result;
 }
-function safeUrl(value) {
-    try { const url = new URL(String(value)); return `${url.origin}${url.pathname}`; }
-    catch { return null; }
-}
-async function token(api) {
-    const permission = await api.extension.requestPermission("accesstoken");
-    let value = typeof permission === "string" && permission.length > 100 ? permission : null;
-    if (!value && typeof api.extension.getPermission === "function") {
-        try { value = await api.extension.getPermission("accesstoken"); } catch {}
-    }
-    return { value, status: value ? "token-received" : String(permission || "no-token") };
-}
-async function compact(response) {
-    const contentType = response.headers.get("content-type") || "";
-    let body = null;
-    try { body = /json/i.test(contentType) ? await response.clone().json() : (await response.clone().text()).slice(0, 1000); }
-    catch (error) { body = { readError: error?.message || String(error) }; }
-    return { ok: response.ok, status: response.status, statusText: response.statusText, url: safeUrl(response.url), body };
-}
-function findUrl(value) {
-    if (!value) return null;
-    if (typeof value === "string" && /^https?:\/\//i.test(value)) return value;
-    if (Array.isArray(value)) { for (const item of value) { const hit = findUrl(item); if (hit) return hit; } }
-    else if (typeof value === "object") {
-        for (const key of ["downloadUrl", "downloadURL", "url", "signedUrl", "signedURL", "href"]) {
-            if (typeof value[key] === "string" && /^https?:\/\//i.test(value[key])) return value[key];
-        }
-        for (const item of Object.values(value)) { const hit = findUrl(item); if (hit) return hit; }
-    }
-    return null;
-}
-async function signature(blob, name) {
-    const bytes = new Uint8Array(await blob.slice(0, 4096).arrayBuffer());
-    const text = new TextDecoder("utf-8").decode(bytes).replace(/^\uFEFF/, "").trimStart();
-    return { name, size: blob.size, validIfcStep: text.toUpperCase().startsWith("ISO-10303-21;") && /HEADER\s*;/i.test(text.slice(0, 1024)), firstBytesHex: Array.from(bytes.slice(0, 32)).map(v => v.toString(16).padStart(2, "0")).join(" ") };
-}
-export async function downloadOriginalIfc({ api, models, registry, renderSources }) {
-    const diagnostic = { version: ORIGINAL_IFC_DOWNLOAD_VERSION, permission: null, project: null, coreBase: null, models: [] };
-    try {
-        const project = await api.project.getProject();
-        diagnostic.project = { id: project?.id || null, name: project?.name || null, location: project?.location || null };
-        diagnostic.coreBase = coreBase(project?.location);
-        const auth = await token(api);
-        diagnostic.permission = { status: auth.status, tokenReceived: Boolean(auth.value), tokenLength: auth.value?.length || 0 };
-        if (!auth.value) throw new Error(`Tilgangstoken ble ikke mottatt. Status: ${auth.status}`);
-        const headers = { Authorization: `Bearer ${auth.value}`, Accept: "application/json" };
-        for (const model of models || []) {
-            const loaded = await api.viewer.getLoadedModel(String(model?.versionId || model?.id));
-            const meta = loaded?.file || {};
-            const projectId = String(meta.projectId || project.id || "");
-            const fileId = String(meta.id || loaded?.id || model?.id || "");
-            const versionId = String(meta.versionId || loaded?.versionId || model?.versionId || "");
-            const fileName = String(meta.name || loaded?.name || model?.name || "model.ifc");
-            const result = { fileName, projectId, fileId, versionId, requests: [], download: null, attached: false };
-            const urls = [
-                ["file-metadata", `${diagnostic.coreBase}/2.0/files/${encodeURIComponent(fileId)}`],
-                ["file-versions", `${diagnostic.coreBase}/2.1/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/versions`],
-                ["download-url", `${diagnostic.coreBase}/2.0/files/fs/${encodeURIComponent(versionId || fileId)}/downloadurl`]
-            ];
-            let downloadUrl = null;
-            for (const [name, url] of urls) {
-                try {
-                    const data = await compact(await fetch(url, { headers }));
-                    result.requests.push({ name, ...data });
-                    if (name === "download-url") {
-                        downloadUrl = typeof data.body?.url === "string" ? data.body.url : findUrl(data.body);
-                    }
-                }
-                catch (error) { result.requests.push({ name, error: error?.message || String(error) }); }
-            }
-            if (downloadUrl) {
-                try {
-                    const response = await fetch(downloadUrl);
-                    const blob = await response.blob();
-                    const check = await signature(blob, fileName);
-                    result.download = { ok: response.ok, status: response.status, url: safeUrl(response.url), signature: check };
-                    if (response.ok && check.validIfcStep) {
-                        const existingProviderIds = new Set((registry.providers || []).map(provider => String(provider.id)));
-                        const originalIfcFile = new File([blob], fileName, {
-                            type: blob.type || "application/octet-stream",
-                            lastModified: Date.now()
-                        });
-                        await registry.addLocalFiles([originalIfcFile], renderSources);
-                        const addedProviders = (registry.providers || []).filter(provider => !existingProviderIds.has(String(provider.id)));
-                        const linkedProvider = [...addedProviders].reverse().find(provider =>
-                            provider?.type === "ifc" && provider?.file?.name === fileName
-                        ) || [...addedProviders].reverse().find(provider => provider?.type === "ifc");
-                        if (!linkedProvider) {
-                            throw new Error(`Original IFC ble dekodet, men ny IFC-provider ble ikke funnet for ${fileName}`);
-                        }
-                        linkedProvider.modelId = versionId || fileId;
-                        linkedProvider.origin = "viewer-original-ifc";
-                        linkedProvider.fileOrigin = "trimble-connect-original";
-                        linkedProvider.metadata = {
-                            ...(linkedProvider.metadata || {}),
-                            trimbleProjectId: projectId,
-                            trimbleFileId: fileId,
-                            trimbleVersionId: versionId,
-                            linkedViewerModelId: versionId || fileId,
-                            sourceMethod: "trimble-connect-original-download"
-                        };
-                        renderSources?.();
-                        result.attached = true;
-                        result.linkedProvider = {
-                            id: linkedProvider.id,
-                            type: linkedProvider.type,
-                            modelId: linkedProvider.modelId,
-                            origin: linkedProvider.origin,
-                            fileOrigin: linkedProvider.fileOrigin,
-                            name: linkedProvider.name || linkedProvider.file?.name || fileName
-                        };
-                    }
-                } catch (error) { result.download = { error: error?.message || String(error), url: safeUrl(downloadUrl) }; }
-            }
-            diagnostic.models.push(result);
-        }
-    } catch (error) { diagnostic.error = error?.message || String(error); diagnostic.errorName = error?.name || "Error"; }
-    console.log("===== ORIGINAL IFC-NEDLASTING v0.6.3e =====");
-    console.dir(diagnostic);
-    window.__crossSectionOriginalIfcDownloadDiagnostic = diagnostic;
-    return diagnostic;
+export async function downloadOriginalIfc({api,models,registry,renderSources}){
+ const diagnostic={version:ORIGINAL_IFC_DOWNLOAD_VERSION,permission:null,project:null,coreBase:null,models:[],readyCount:0,errorCount:0};
+ try{const project=await wait(()=>api.project.getProject(),20000,"Henting av prosjekt");diagnostic.project={id:project?.id||null,name:project?.name||null,location:project?.location||null};diagnostic.coreBase=coreBase(project?.location);const auth=await token(api);diagnostic.permission={status:auth.status,tokenReceived:Boolean(auth.value),tokenLength:auth.value?.length||0};if(!auth.value)throw new Error(`Tilgangstoken ble ikke mottatt. Status: ${auth.status}`);const headers={Authorization:`Bearer ${auth.value}`,Accept:"application/json"};
+  for(const model of models||[]){const result=await processModel({api,model,project,base:diagnostic.coreBase,headers,registry,renderSources});diagnostic.models.push(result);if(result.stage==="ready")diagnostic.readyCount+=1;else diagnostic.errorCount+=1;renderSources?.();}
+ }catch(error){diagnostic.error=errorText(error);diagnostic.errorName=error?.name||"Error";}
+ console.log("===== ORIGINAL IFC-NEDLASTING v0.6.7 =====");console.dir(diagnostic);window.__crossSectionOriginalIfcDownloadDiagnostic=diagnostic;return diagnostic;
 }

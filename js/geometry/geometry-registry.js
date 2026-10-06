@@ -1,18 +1,192 @@
-import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.5k";
-import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.6.2";
+import { IfcGeometryProvider } from "./ifc-geometry-provider.js?v=0.6.7";
+import { TrbGeometryProvider } from "./trb-geometry-provider.js?v=0.6.7";
 import { getAPI } from "../tc-api.js";
-export const GEOMETRY_REGISTRY_VERSION="0.6.6.2-registry-integrated";
-const ext=n=>(String(n||"").split(".").pop()||"").toLowerCase(),mid=m=>String(m?.modelId||m?.id||m?.fileId||m?.versionId||""),mname=m=>String(m?.name||m?.fileName||`${mid(m)}.trb`),key=n=>String(n||"").replace(/\.(ifc|trb|trimbim)$/i,"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
-function asFile(x,n){const b=x?.blob instanceof Blob?x.blob:x?.trbBlob instanceof Blob?x.trbBlob:null;return b?new File([b],n,{type:b.type||"application/octet-stream"}):null}
-export class GeometryRegistry{
-constructor(){this.providers=[];this.counter=1;this.busy=false;this.bind()}
-create(o){const id=o.id||`source-${this.counter++}`;if(ext(o.name)==="ifc")return new IfcGeometryProvider({...o,id});if(["trb","trimbim"].includes(ext(o.name))||o.forceType==="trb")return new TrbGeometryProvider({...o,id});return null}
-findBySource(n,t){return this.providers.find(p=>key(p.name)===key(n)&&p.type===t)}
-bind(){const f=()=>{const b=document.getElementById("btnRefreshModels");if(!b)return setTimeout(f,250);if(b.dataset.trb662)return;b.dataset.trb662="1";b.addEventListener("click",()=>setTimeout(()=>this.discoverVisibleTrbModels({reason:"manual-refresh"}),0))};f()}
-async discoverVisibleTrbModels({reason="direct"}={}){if(this.busy)return null;this.busy=true;try{const a=getAPI(),models=await a.viewer.getModels(),groups=await a.viewer.getObjects({}, {visible:true}),visible=new Set((groups||[]).map(g=>String(g.modelId))),candidates=(models||[]).filter(m=>visible.has(mid(m))&&["trb","trimbim"].includes(ext(mname(m)))),d={version:GEOMETRY_REGISTRY_VERSION,reason,discoveredCount:candidates.length,openedCount:0,failedCount:0,models:[]};for(const m of candidates){const id=mid(m),n=mname(m);let p=this.providers.find(x=>x.type==="trb"&&String(x.modelId)===id);if(!p){p=this.create({id:`viewer-trb-${id}`,name:n,modelId:id,origin:"viewer-trb",forceType:"trb"});this.providers.push(p)}if(!p.file){let f=asFile(m,n);if(!f)f=asFile(await a.viewer.getLoadedModel(id),n);if(f){p.attachFile(f);p.fileOrigin="viewer-loaded-model"}}if(p.file)await p.open();if(p.status==="ready")d.openedCount++;else d.failedCount++;d.models.push({modelId:id,name:n,status:p.status,fileSize:p.file?.size||0,error:p.error||null})}window.__crossSectionTrbRegistryDiagnostic=d;window.dispatchEvent(new CustomEvent("cross-section-geometry-updated",{detail:d}));return d}finally{this.busy=false}}
-async addLocalFiles(files,onProgress){const out=[];for(const f of Array.from(files||[])){const t=ext(f.name)==="trimbim"?"trb":ext(f.name);let p=this.findBySource(f.name,t);if(!p){p=this.create({name:f.name,file:f,origin:"local"});if(!p)continue;this.providers.push(p)}else p.attachFile(f);p.fileOrigin="local-file-picker";await p.open();onProgress?.(p,p.status);out.push(p)}return out}
-remove(id){const i=this.providers.findIndex(p=>p.id===id);if(i<0)return false;this.providers[i].close();this.providers.splice(i,1);return true}
-clearLocal(){for(const p of[...this.providers])if(p.fileOrigin==="local-file-picker"||p.origin==="local")this.remove(p.id)}
-summary(){const sources=this.providers.map(p=>{const s=p.getSummary();s.origin=p.origin||(p.modelId?"viewer":p.file?"local":"detached");s.fileOrigin=p.fileOrigin||null;return s});return{sourceCount:sources.length,viewerCount:sources.filter(s=>s.origin.includes("viewer")).length,localCount:sources.filter(s=>s.origin.includes("local")).length,automaticCount:sources.filter(s=>s.origin.includes("diagnostic")).length,ifcCount:sources.filter(s=>s.type==="ifc").length,trbCount:sources.filter(s=>s.type==="trb").length,readyCount:sources.filter(s=>s.status==="ready").length,totalEntities:sources.reduce((a,s)=>a+(s.entityCount||0),0),sources}}
+import { beginUiOperation, endUiOperation } from "../ui-loading-stabilizer.js?v=0.6.7";
+
+export const GEOMETRY_REGISTRY_VERSION = "0.6.7-ui-and-loading-stabilization";
+const ext = n => (String(n || "").split(".").pop() || "").toLowerCase();
+const mid = m => String(m?.modelId || m?.id || m?.fileId || m?.versionId || "");
+const mname = m => String(m?.name || m?.fileName || m?.displayName || `${mid(m)}.trb`);
+const key = n => String(n || "").replace(/\.(ifc|trb|trimbim)$/i, "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const errorText = error => error?.message || String(error);
+
+function asFile(value, name) {
+  const blob = value?.blob instanceof Blob ? value.blob : value?.trbBlob instanceof Blob ? value.trbBlob : null;
+  return blob ? new File([blob], name, { type: blob.type || "application/octet-stream" }) : null;
 }
-export{key as normalizedSourceKey};
+
+async function settleOne(task, timeoutMs, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      task(),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} overskred ${timeoutMs / 1000} sekunder`)), timeoutMs); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export class GeometryRegistry {
+  constructor() {
+    this.providers = [];
+    this.counter = 1;
+    this.busy = false;
+    this.pendingDiscovery = false;
+    this.bind();
+  }
+
+  create(options) {
+    const id = options.id || `source-${this.counter++}`;
+    if (ext(options.name) === "ifc") return new IfcGeometryProvider({ ...options, id });
+    if (["trb", "trimbim"].includes(ext(options.name)) || options.forceType === "trb") return new TrbGeometryProvider({ ...options, id });
+    return null;
+  }
+
+  findBySource(name, type) {
+    return this.providers.find(provider => key(provider.name) === key(name) && provider.type === type);
+  }
+
+  bind() {
+    const bindButton = () => {
+      const button = document.getElementById("btnRefreshModels");
+      if (!button) return setTimeout(bindButton, 250);
+      if (button.dataset.trb67) return;
+      button.dataset.trb67 = "1";
+      button.addEventListener("click", () => setTimeout(() => this.discoverVisibleTrbModels({ reason: "manual-refresh" }), 0));
+    };
+    bindButton();
+  }
+
+  async discoverVisibleTrbModels({ reason = "direct" } = {}) {
+    if (this.busy) {
+      this.pendingDiscovery = true;
+      return { skipped: true, reason: "discovery-already-running" };
+    }
+    this.busy = true;
+    this.pendingDiscovery = false;
+    const uiToken = beginUiOperation("Laster synlige TRB-modeller...", { lockRefresh: true });
+    const diagnostic = { version: GEOMETRY_REGISTRY_VERSION, reason, discoveredCount: 0, openedCount: 0, failedCount: 0, models: [] };
+    try {
+      const api = getAPI();
+      const [models, groups] = await Promise.all([
+        settleOne(() => api.viewer.getModels(), 20000, "Henting av modelliste"),
+        settleOne(() => api.viewer.getObjects({}, { visible: true }), 20000, "Henting av synlige objekter")
+      ]);
+      const visible = new Set((groups || []).map(group => String(group.modelId)));
+      const candidates = (models || []).filter(model => visible.has(mid(model)) && ["trb", "trimbim"].includes(ext(mname(model))));
+      diagnostic.discoveredCount = candidates.length;
+
+      for (const model of candidates) {
+        const modelId = mid(model);
+        const name = mname(model);
+        let provider = this.providers.find(item => item.type === "trb" && String(item.modelId) === modelId);
+        if (!provider) {
+          provider = this.create({ id: `viewer-trb-${modelId}`, name, modelId, origin: "viewer-trb", forceType: "trb" });
+          this.providers.push(provider);
+        }
+        provider.errorStage = null;
+        try {
+          if (!provider.file) {
+            provider.status = "loading";
+            let file = asFile(model, name);
+            if (!file) {
+              provider.errorStage = "viewer.getLoadedModel";
+              const loaded = await settleOne(() => api.viewer.getLoadedModel(modelId), 30000, `Åpning av ${name}`);
+              file = asFile(loaded, name);
+            }
+            if (file) {
+              provider.attachFile(file);
+              provider.fileOrigin = "viewer-loaded-model";
+            }
+          }
+          if (!provider.file) throw new Error("Viewer returnerte ingen TRB-blob");
+          provider.errorStage = "provider.open";
+          await settleOne(() => provider.open(), 120000, `Dekoding av ${name}`);
+          if (provider.status !== "ready") throw new Error(provider.error || `Uventet status: ${provider.status}`);
+          provider.errorStage = null;
+          diagnostic.openedCount += 1;
+        } catch (error) {
+          provider.status = "error";
+          provider.error = errorText(error);
+          diagnostic.failedCount += 1;
+          console.error("TRB-MODELLFEIL", { modelId, name, stage: provider.errorStage, error });
+        }
+        diagnostic.models.push({ modelId, name, status: provider.status, fileSize: provider.file?.size || 0, errorStage: provider.errorStage, error: provider.error || null });
+        window.dispatchEvent(new CustomEvent("cross-section-geometry-updated", { detail: diagnostic }));
+      }
+      window.__crossSectionTrbRegistryDiagnostic = diagnostic;
+      return diagnostic;
+    } catch (error) {
+      diagnostic.error = errorText(error);
+      console.error("TRB discovery feilet", error);
+      return diagnostic;
+    } finally {
+      this.busy = false;
+      endUiOperation(uiToken, diagnostic.failedCount ? `${diagnostic.openedCount} TRB klare, ${diagnostic.failedCount} feilet` : `${diagnostic.openedCount} TRB-modeller klare`);
+      if (this.pendingDiscovery) setTimeout(() => this.discoverVisibleTrbModels({ reason: "pending" }), 0);
+    }
+  }
+
+  async addLocalFiles(files, onProgress) {
+    const output = [];
+    for (const file of Array.from(files || [])) {
+      const type = ext(file.name) === "trimbim" ? "trb" : ext(file.name);
+      let provider = this.findBySource(file.name, type);
+      if (!provider) {
+        provider = this.create({ name: file.name, file, origin: "local" });
+        if (!provider) continue;
+        this.providers.push(provider);
+      } else provider.attachFile(file);
+      provider.fileOrigin = "local-file-picker";
+      provider.errorStage = "provider.open";
+      try {
+        await settleOne(() => provider.open(), 120000, `Åpning av ${file.name}`);
+        if (provider.status === "ready") provider.errorStage = null;
+      } catch (error) {
+        provider.status = "error";
+        provider.error = errorText(error);
+      }
+      onProgress?.(provider, provider.status);
+      output.push(provider);
+    }
+    return output;
+  }
+
+  remove(id) {
+    const index = this.providers.findIndex(provider => provider.id === id);
+    if (index < 0) return false;
+    this.providers[index].close();
+    this.providers.splice(index, 1);
+    return true;
+  }
+
+  clearLocal() {
+    for (const provider of [...this.providers]) if (provider.fileOrigin === "local-file-picker" || provider.origin === "local") this.remove(provider.id);
+  }
+
+  summary() {
+    const sources = this.providers.map(provider => {
+      const summary = provider.getSummary();
+      summary.origin = provider.origin || (provider.modelId ? "viewer" : provider.file ? "local" : "detached");
+      summary.fileOrigin = provider.fileOrigin || null;
+      summary.errorStage = provider.errorStage || null;
+      return summary;
+    });
+    return {
+      sourceCount: sources.length,
+      viewerCount: sources.filter(source => source.origin.includes("viewer")).length,
+      localCount: sources.filter(source => source.origin.includes("local")).length,
+      automaticCount: sources.filter(source => source.origin.includes("diagnostic")).length,
+      ifcCount: sources.filter(source => source.type === "ifc").length,
+      trbCount: sources.filter(source => source.type === "trb").length,
+      readyCount: sources.filter(source => source.status === "ready").length,
+      errorCount: sources.filter(source => source.status === "error").length,
+      loadingCount: sources.filter(source => ["new", "opening", "loading"].includes(source.status)).length,
+      totalEntities: sources.reduce((sum, source) => sum + (source.entityCount || 0), 0),
+      sources
+    };
+  }
+}
+
+export { key as normalizedSourceKey };
