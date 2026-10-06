@@ -1,12 +1,19 @@
-CrossSectionViewer v0.6.7.3 CENTERLINE_CORRIDOR_FILTER
-Grunnlag: v0.6.7.2
+CrossSectionViewer v0.6.7.4 CORRIDOR_OBJECT_STREAMING
+Grunnlag: v0.6.7.3
 
-Virkemåte:
-1. Brukeren velger IFCALIGNMENT.
-2. Oppdater synlige modeller henter stasjonsreferentene.
-3. Synlige objektbokser testes mot hvert senterlinjesegment med valgt korridorbredde.
-4. Bare synlige IFC-modeller med minst ett objekt innenfor korridoren lastes ned og dekodes.
-5. Modeller utenfor korridoren registreres i diagnostikken, men dekodes ikke.
+Hovedendringer:
+- Objektbokser som treffer korridoren beholdes som runtime-ID-er.
+- Runtime-ID-er konverteres til IFC GlobalId før nedlasting.
+- GlobalId-er følger den nedlastede File-instansen inn i IFC-provideren.
+- GetExpressIdFromGuid kobler GlobalId til ExpressId.
+- StreamMeshes dekoder kun korridorobjektene, i puljer på 20.
+- Event loop frigjøres mellom puljene.
+- StreamAllMeshes brukes ikke.
+- CloseModel frigjør WASM-modellen etter behandling.
+- Import map tvinger app.js sine eldre imports til v0.6.7.4-modulene.
 
-Standard korridorbredde er 100 meter på hver side. Geometrikildelisten er lukket som standard.
-Diagnostikk: window.__crossSectionOriginalIfcDownloadDiagnostic
+Diagnostikk:
+window.__crossSectionOriginalIfcDownloadDiagnostic
+Events:
+cross-section-ifc-progress
+cross-section-ifc-object-progress
