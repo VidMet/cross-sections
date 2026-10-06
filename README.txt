@@ -1,23 +1,20 @@
-CrossSectionViewer v0.6.7 UI_AND_LOADING_STABILIZATION
-Grunnlag: v0.6.6.2
+CrossSectionViewer v0.6.7.3 CENTERLINE_CORRIDOR_FILTER
+Grunnlag: v0.6.7.2
 
-Kopier hele innholdet i denne pakken til prosjektmappen og overskriv eksisterende filer.
+Kopier hele innholdet til prosjektmappen og overskriv eksisterende filer.
 
-Endrede filer:
+Komplette erstatningsfiler:
 - index.html
 - style.css
 - js/versions.js
 - js/original-ifc-download.js
-- js/geometry/geometry-registry.js
 
-Ny fil:
-- js/ui-loading-stabilizer.js
+Virkemåte:
+1. Brukeren velger IFCALIGNMENT.
+2. Oppdater synlige modeller henter stasjonsreferentene.
+3. Synlige objektbokser testes mot hvert senterlinjesegment med valgt korridorbredde.
+4. Bare synlige IFC-modeller med minst ett objekt innenfor korridoren lastes ned og dekodes.
+5. Modeller utenfor korridoren registreres i diagnostikken, men dekodes ikke.
 
-Hovedendringer:
-- Feil isoleres per IFC- eller TRB-modell.
-- En modellfeil stopper ikke resten av lastingen.
-- Timeout på Viewer-kall, nedlasting og dekoding.
-- Separate errorStage-verdier i diagnostikken.
-- Responsiv UI-status og låsing kun av oppdateringsknappen under aktiv modelloppdatering.
-- Cache-busting til v0.6.7 fra index.html og geometry-registry.js.
-- IFC-modeller med provider-feil beholdes med konkret feiltrinn og feilmelding.
+Standard korridorbredde er 100 meter på hver side. Geometrikildelisten er lukket som standard.
+Diagnostikk: window.__crossSectionOriginalIfcDownloadDiagnostic
